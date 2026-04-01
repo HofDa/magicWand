@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="168" fill="#130f25" />
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="35%" r="70%">
+      <stop offset="0" stop-color="#2c1f4a" />
+      <stop offset="1" stop-color="#0a0913" />
+    </radialGradient>
+    <linearGradient id="wand" x1="146" x2="382" y1="152" y2="382" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffe39d" />
+      <stop offset="0.55" stop-color="#ff8d7d" />
+      <stop offset="1" stop-color="#66dbff" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="168" fill="url(#bg)" />
+  <path
+    d="M159 367c46-34 95-88 145-163l39-58c6-9 17-12 27-7l14 8c10 6 13 19 7 28l-39 58c-44 66-87 125-131 177l-62-43Z"
+    fill="url(#wand)"
+  />
+  <path
+    d="m248 119 19 41 45 7-33 28 8 46-39-24-40 24 8-46-33-28 45-7 20-41Z"
+    fill="#fff8dc"
+  />
+  <path
+    d="M153 165c28-17 54-26 79-26 57 0 107 48 107 108 0 16-4 31-10 45"
+    fill="none"
+    opacity="0.2"
+    stroke="#f3f7ff"
+    stroke-linecap="round"
+    stroke-width="18"
+  />
+  <circle cx="367" cy="118" r="12" fill="#66dbff" />
+  <circle cx="395" cy="182" r="10" fill="#ffe39d" />
+</svg>
+
