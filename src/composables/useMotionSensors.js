@@ -72,6 +72,7 @@ export function useMotionSensors() {
   const history = ref([])
   const lastError = ref('')
   const sampleRevision = ref(0)
+  const sampleListeners = new Set()
   let sampleSequence = 0
 
   let lastOrientation = createEmptySample().orientation
@@ -86,6 +87,7 @@ export function useMotionSensors() {
     currentSample.value = nextSample
     history.value = [...history.value.slice(-(HISTORY_LIMIT - 1)), nextSample]
     sampleRevision.value += 1
+    sampleListeners.forEach((listener) => listener(nextSample))
   }
 
   function handleMotion(event) {
@@ -205,6 +207,14 @@ export function useMotionSensors() {
     history.value = history.value.slice(-1)
   }
 
+  function onSample(listener) {
+    sampleListeners.add(listener)
+
+    return () => {
+      sampleListeners.delete(listener)
+    }
+  }
+
   onBeforeUnmount(stop)
 
   return {
@@ -213,6 +223,7 @@ export function useMotionSensors() {
     history,
     isListening: computed(() => listening.value),
     lastError,
+    onSample,
     permissionState,
     sampleRevision,
     start,

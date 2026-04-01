@@ -1,5 +1,5 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import TracePanel from './components/TracePanel.vue'
 import VectorBars from './components/VectorBars.vue'
 import { useMotionSensors } from './composables/useMotionSensors'
@@ -23,8 +23,8 @@ const {
   history,
   isListening,
   lastError,
+  onSample,
   permissionState,
-  sampleRevision,
   start
 } = useMotionSensors()
 
@@ -482,19 +482,13 @@ function removeSpell(id) {
     : 'Template deleted.'
 }
 
-watch(
-  sampleRevision,
-  () => {
-    if (!recordingMode.value || !currentSample.value.timestamp) {
-      return
-    }
-
-    capturedSamples.value = [
-      ...capturedSamples.value,
-      cloneSample(currentSample.value)
-    ]
+const stopSampleSubscription = onSample((sample) => {
+  if (!recordingMode.value || !sample.timestamp) {
+    return
   }
-)
+
+  capturedSamples.value = [...capturedSamples.value, cloneSample(sample)]
+})
 
 watch(
   () => spellbook.value.length,
@@ -527,6 +521,10 @@ watch(activeGuideIndex, (index) => {
 onMounted(() => {
   spellbook.value = loadSpellbook()
   selectedSpellId.value = spellbook.value[0]?.id ?? ''
+})
+
+onBeforeUnmount(() => {
+  stopSampleSubscription()
 })
 </script>
 
