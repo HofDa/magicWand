@@ -146,6 +146,112 @@ function formatDuration(durationMs) {
   return `${(durationMs / 1000).toFixed(1)}s`
 }
 
+function movementCue(axis, value) {
+  if (axis === 'x') {
+    return value >= 0 ? 'Right' : 'Left'
+  }
+
+  if (axis === 'y') {
+    return value >= 0 ? 'Up' : 'Down'
+  }
+
+  return value >= 0 ? 'Forward' : 'Back'
+}
+
+function movementSymbol(axis, value) {
+  if (axis === 'x') {
+    return value >= 0 ? '→' : '←'
+  }
+
+  if (axis === 'y') {
+    return value >= 0 ? '↑' : '↓'
+  }
+
+  return value >= 0 ? '⇡' : '⇣'
+}
+
+function rotationCue(axis, value) {
+  if (Math.abs(value) < 18) {
+    return 'Hold'
+  }
+
+  if (axis === 'x') {
+    return value >= 0 ? 'Roll CW' : 'Roll CCW'
+  }
+
+  if (axis === 'y') {
+    return value >= 0 ? 'Pitch Fwd' : 'Pitch Back'
+  }
+
+  return value >= 0 ? 'Twist CW' : 'Twist CCW'
+}
+
+function rotationSymbol(value) {
+  if (Math.abs(value) < 18) {
+    return '•'
+  }
+
+  return value >= 0 ? '↻' : '↺'
+}
+
+function getSegmentCount(samples) {
+  return Math.min(
+    samples.length,
+    clamp(Math.round(durationBetween(samples[0], samples.at(-1)) / 700), 2, 4)
+  )
+}
+
+function buildInstructionSegments(samples) {
+  if (samples.length < 6) {
+    return []
+  }
+
+  const segmentCount = getSegmentCount(samples)
+  const chunkSize = Math.ceil(samples.length / segmentCount)
+  let elapsedMs = 0
+
+  return Array.from({ length: segmentCount }, (_, index) => {
+    const slice = samples.slice(index * chunkSize, (index + 1) * chunkSize)
+    const durationMs = Math.max(250, durationBetween(slice[0], slice.at(-1)) || 250)
+    const accelerationTrend = getAxisTrend(slice, (sample) => sample.acceleration)
+    const rotationTrend = getAxisTrend(slice, (sample) => ({
+      x: sample.rotationRate?.gamma,
+      y: sample.rotationRate?.beta,
+      z: sample.rotationRate?.alpha
+    }))
+    const movementStrength = vectorMagnitude({
+      x: accelerationTrend.axis === 'x' ? accelerationTrend.value / slice.length : 0,
+      y: accelerationTrend.axis === 'y' ? accelerationTrend.value / slice.length : 0,
+      z: accelerationTrend.axis === 'z' ? accelerationTrend.value / slice.length : 0
+    })
+
+    const opening =
+      index === 0 ? 'Open with' : index === segmentCount - 1 ? 'Finish with' : 'Then'
+    const motionText = directionLabel(accelerationTrend.axis, accelerationTrend.value)
+    const wristText = rotationLabel(rotationTrend.axis, rotationTrend.value)
+    const detail = wristText ? `${motionText} and ${wristText}` : motionText
+    const segment = {
+      index,
+      opening,
+      durationMs,
+      durationLabel: formatDuration(durationMs),
+      startMs: elapsedMs,
+      endMs: elapsedMs + durationMs,
+      motionText,
+      motionCue: movementCue(accelerationTrend.axis, accelerationTrend.value),
+      motionSymbol: movementSymbol(accelerationTrend.axis, accelerationTrend.value),
+      wristText,
+      wristCue: rotationCue(rotationTrend.axis, rotationTrend.value),
+      wristSymbol: rotationSymbol(rotationTrend.value),
+      intensityText: intensityLabel(movementStrength),
+      stepText: `${opening} ${intensityLabel(movementStrength)} ${detail} for ${formatDuration(durationMs)}.`
+    }
+
+    elapsedMs += durationMs
+    return segment
+  })
+}
+
 export function compactSamples(samples, maxSamples = 360) {
   if (samples.length <= maxSamples) {
     return samples
@@ -203,39 +309,14 @@ export function extractMetrics(samples) {
 }
 
 export function createInstructionSteps(samples) {
-  if (samples.length < 6) {
-    return ['Make a larger motion so the app can infer a full spell path.']
-  }
+  const segments = buildInstructionSegments(samples)
+  return segments.length
+    ? segments.map((segment) => segment.stepText)
+    : ['Make a larger motion so the app can infer a full spell path.']
+}
 
-  const segmentCount = Math.min(
-    samples.length,
-    clamp(Math.round(durationBetween(samples[0], samples.at(-1)) / 700), 2, 4)
-  )
-  const chunkSize = Math.ceil(samples.length / segmentCount)
-
-  return Array.from({ length: segmentCount }, (_, index) => {
-    const slice = samples.slice(index * chunkSize, (index + 1) * chunkSize)
-    const durationMs = durationBetween(slice[0], slice.at(-1))
-    const accelerationTrend = getAxisTrend(slice, (sample) => sample.acceleration)
-    const rotationTrend = getAxisTrend(slice, (sample) => ({
-      x: sample.rotationRate?.gamma,
-      y: sample.rotationRate?.beta,
-      z: sample.rotationRate?.alpha
-    }))
-    const movementStrength = vectorMagnitude({
-      x: accelerationTrend.axis === 'x' ? accelerationTrend.value / slice.length : 0,
-      y: accelerationTrend.axis === 'y' ? accelerationTrend.value / slice.length : 0,
-      z: accelerationTrend.axis === 'z' ? accelerationTrend.value / slice.length : 0
-    })
-
-    const opening =
-      index === 0 ? 'Open with' : index === segmentCount - 1 ? 'Finish with' : 'Then'
-    const motionText = directionLabel(accelerationTrend.axis, accelerationTrend.value)
-    const rotationText = rotationLabel(rotationTrend.axis, rotationTrend.value)
-    const detail = rotationText ? `${motionText} and ${rotationText}` : motionText
-
-    return `${opening} ${intensityLabel(movementStrength)} ${detail} for ${formatDuration(durationMs)}.`
-  })
+export function createInstructionGuide(samples) {
+  return buildInstructionSegments(samples)
 }
 
 export function compareRecordings(templateSamples, attemptSamples) {

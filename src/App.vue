@@ -6,6 +6,7 @@ import { useMotionSensors } from './composables/useMotionSensors'
 import {
   compareRecordings,
   compactSamples,
+  createInstructionGuide,
   createInstructionSteps,
   extractMetrics
 } from './lib/gestureMath'
@@ -34,6 +35,8 @@ const selectedSpellId = ref('')
 const lastCapturedTimestamp = ref(0)
 const latestComparison = ref(null)
 const statusMessage = ref('Enable the sensors and move the phone like a wand.')
+const lastHapticGuideIndex = ref(-1)
+const audioFeedbackMode = ref('none')
 
 const accelTraceFields = [
   { label: 'ax', path: 'acceleration.x', color: '#ff9c73', scale: 12 },
@@ -50,6 +53,16 @@ const rotationTraceFields = [
 const selectedSpell = computed(
   () => spellbook.value.find((spell) => spell.id === selectedSpellId.value) ?? null
 )
+const selectedGuide = computed(() =>
+  selectedSpell.value ? createInstructionGuide(selectedSpell.value.samples) : []
+)
+const selectedGuideDurationMs = computed(() => {
+  if (selectedGuide.value.length) {
+    return selectedGuide.value.at(-1).endMs
+  }
+
+  return selectedSpell.value?.metrics.durationMs ?? 0
+})
 
 const liveAcceleration = computed(() => [
   {
@@ -132,6 +145,57 @@ const comparisonTone = computed(() => {
 
   return latestComparison.value.verdict
 })
+const copyProgressPercent = computed(() => {
+  if (recordingMode.value !== 'attempt' || !selectedGuideDurationMs.value) {
+    return 0
+  }
+
+  return Math.min(
+    100,
+    Math.round((recordingMetrics.value.durationMs / selectedGuideDurationMs.value) * 100)
+  )
+})
+const activeGuideIndex = computed(() => {
+  if (!selectedGuide.value.length) {
+    return -1
+  }
+
+  if (recordingMode.value !== 'attempt') {
+    return -1
+  }
+
+  const elapsedMs = recordingMetrics.value.durationMs
+  const foundIndex = selectedGuide.value.findIndex(
+    (segment) => elapsedMs >= segment.startMs && elapsedMs < segment.endMs
+  )
+
+  return foundIndex === -1 ? selectedGuide.value.length - 1 : foundIndex
+})
+const activeGuide = computed(() =>
+  activeGuideIndex.value >= 0 ? selectedGuide.value[activeGuideIndex.value] : null
+)
+
+const canStartTemplate = computed(() => recordingMode.value === '')
+const canSaveTemplate = computed(
+  () => recordingMode.value === 'template' && capturedSamples.value.length >= 8
+)
+const canStartAttempt = computed(
+  () => recordingMode.value === '' && Boolean(selectedSpell.value)
+)
+const canScoreAttempt = computed(
+  () => recordingMode.value === 'attempt' && capturedSamples.value.length >= 8
+)
+const recordingLabel = computed(() => {
+  if (recordingMode.value === 'template') {
+    return 'Recording template'
+  }
+
+  if (recordingMode.value === 'attempt') {
+    return 'Recording copy'
+  }
+
+  return 'Idle'
+})
 
 function cloneSample(sample) {
   if (typeof structuredClone === 'function') {
@@ -139,6 +203,128 @@ function cloneSample(sample) {
   }
 
   return JSON.parse(JSON.stringify(sample))
+}
+
+let audioContext = null
+
+function canVibrate() {
+  return (
+    typeof navigator !== 'undefined' &&
+    typeof navigator.vibrate === 'function'
+  )
+}
+
+async function primeAudioFeedback() {
+  if (typeof window === 'undefined') {
+    audioFeedbackMode.value = 'none'
+    return false
+  }
+
+  const AudioContextClass = window.AudioContext || window.webkitAudioContext
+
+  if (!AudioContextClass) {
+    audioFeedbackMode.value = 'none'
+    return false
+  }
+
+  try {
+    if (!audioContext) {
+      audioContext = new AudioContextClass()
+    }
+
+    if (audioContext.state === 'suspended') {
+      await audioContext.resume()
+    }
+
+    audioFeedbackMode.value = 'audio'
+    return true
+  } catch {
+    audioFeedbackMode.value = 'none'
+    return false
+  }
+}
+
+function playBeepPattern(pattern) {
+  if (!audioContext) {
+    return
+  }
+
+  const segments = Array.isArray(pattern) ? pattern : [pattern]
+  let offsetMs = 0
+
+  segments.forEach((segmentMs, index) => {
+    if (index % 2 === 1) {
+      offsetMs += segmentMs
+      return
+    }
+
+    const startTime = audioContext.currentTime + offsetMs / 1000
+    const durationSeconds = Math.max(segmentMs, 25) / 1000
+    const oscillator = audioContext.createOscillator()
+    const gainNode = audioContext.createGain()
+
+    oscillator.type = index === 0 ? 'triangle' : 'sine'
+    oscillator.frequency.setValueAtTime(index === 0 ? 880 : 1175, startTime)
+
+    gainNode.gain.setValueAtTime(0.0001, startTime)
+    gainNode.gain.exponentialRampToValueAtTime(0.045, startTime + 0.01)
+    gainNode.gain.exponentialRampToValueAtTime(
+      0.0001,
+      startTime + durationSeconds
+    )
+
+    oscillator.connect(gainNode)
+    gainNode.connect(audioContext.destination)
+    oscillator.start(startTime)
+    oscillator.stop(startTime + durationSeconds + 0.02)
+
+    offsetMs += segmentMs
+  })
+}
+
+function triggerHaptic(pattern) {
+  if (canVibrate()) {
+    audioFeedbackMode.value = 'vibrate'
+    navigator.vibrate(pattern)
+    return
+  }
+
+  if (audioFeedbackMode.value === 'audio') {
+    playBeepPattern(pattern)
+  }
+}
+
+async function primePhaseFeedback() {
+  if (canVibrate()) {
+    audioFeedbackMode.value = 'vibrate'
+    return true
+  }
+
+  return primeAudioFeedback()
+}
+
+function triggerSuccessFeedback() {
+  if (canVibrate()) {
+    audioFeedbackMode.value = 'vibrate'
+    navigator.vibrate([80, 40, 120])
+    return
+  }
+
+  if (audioFeedbackMode.value === 'audio') {
+    playBeepPattern([90, 50, 130])
+  }
+}
+
+function feedbackHint() {
+  if (audioFeedbackMode.value === 'vibrate') {
+    return 'Phase cues will use haptics.'
+  }
+
+  if (audioFeedbackMode.value === 'audio') {
+    return 'Phase cues will use short beeps.'
+  }
+
+  return 'Phase cues are visual only on this device.'
 }
 
 function persistSpellbook() {
@@ -157,36 +343,81 @@ async function enableSensors() {
     : lastError.value || 'Unable to enable sensors.'
 }
 
+async function ensureSensorsReady(nextMessage) {
+  if (isListening.value) {
+    statusMessage.value = nextMessage
+    return true
+  }
+
+  const allowed = await start()
+  statusMessage.value = allowed
+    ? nextMessage
+    : lastError.value || 'Unable to enable sensors.'
+
+  return allowed
+}
+
 function resetCapture(mode) {
   recordingMode.value = mode
   capturedSamples.value = []
   lastCapturedTimestamp.value = 0
   latestComparison.value = null
+  lastHapticGuideIndex.value = -1
 }
 
-function startTemplateRecording() {
-  if (!isListening.value) {
-    statusMessage.value = 'Enable the sensors before recording.'
+async function startTemplateRecording() {
+  if (recordingMode.value) {
+    statusMessage.value = 'Finish or cancel the current recording before starting another one.'
+    return
+  }
+
+  const ready = await ensureSensorsReady(
+    'Recording template spell. Move through the full gesture, then tap Save Template.'
+  )
+  if (!ready) {
     return
   }
 
   resetCapture('template')
-  statusMessage.value = 'Recording template spell. Move through the full gesture.'
 }
 
-function startAttemptRecording() {
+async function startAttemptRecording() {
   if (!selectedSpell.value) {
-    statusMessage.value = 'Choose or record a spell before trying to copy it.'
+    statusMessage.value = 'Choose a saved template before trying to copy it.'
     return
   }
 
-  if (!isListening.value) {
-    statusMessage.value = 'Enable the sensors before recording a copy.'
+  if (recordingMode.value) {
+    statusMessage.value = 'Finish or cancel the current recording before starting another one.'
+    return
+  }
+
+  await primePhaseFeedback()
+
+  const ready = await ensureSensorsReady(
+    `Recording your copy of ${selectedSpell.value.name}. Follow the movement guide, then tap Score Copy. ${feedbackHint()}`
+  )
+  if (!ready) {
     return
   }
 
   resetCapture('attempt')
-  statusMessage.value = `Copying ${selectedSpell.value.name}. Match its timing and wrist rotation.`
+}
+
+function cancelRecording() {
+  if (!recordingMode.value) {
+    return
+  }
+
+  const cancelledMode = recordingMode.value
+  recordingMode.value = ''
+  capturedSamples.value = []
+  lastCapturedTimestamp.value = 0
+  lastHapticGuideIndex.value = -1
+  statusMessage.value =
+    cancelledMode === 'template'
+      ? 'Template recording cancelled.'
+      : 'Copy attempt cancelled.'
 }
 
 function stopRecording() {
@@ -198,7 +429,8 @@ function stopRecording() {
 
   if (sampleCount < 8) {
     recordingMode.value = ''
-    statusMessage.value = 'The motion was too short. Record at least a second of movement.'
+    statusMessage.value =
+      'The motion was too short to save. Keep moving for about a second, then save again.'
     return
   }
 
@@ -217,28 +449,26 @@ function stopRecording() {
     spellbook.value = [spell, ...spellbook.value].slice(0, 18)
     setSelectedSpell(spell.id)
     persistSpellbook()
-    statusMessage.value = `${spell.name} saved. Use Copy Mode to mimic it.`
+    statusMessage.value = `${spell.name} saved. Select it below and use Copy Mode to mimic it.`
   } else if (selectedSpell.value) {
     latestComparison.value = compareRecordings(
       selectedSpell.value.samples,
       capturedSamples.value
     )
 
-    if (
-      latestComparison.value.score >= 86 &&
-      typeof navigator !== 'undefined' &&
-      typeof navigator.vibrate === 'function'
-    ) {
-      navigator.vibrate([80, 40, 120])
+    if (latestComparison.value.score >= 86) {
+      triggerSuccessFeedback()
     }
 
     statusMessage.value = `Copy attempt scored ${latestComparison.value.score}/100.`
   }
 
   recordingMode.value = ''
+  lastHapticGuideIndex.value = -1
 }
 
 function removeSpell(id) {
+  const removedSpell = spellbook.value.find((spell) => spell.id === id)
   spellbook.value = spellbook.value.filter((spell) => spell.id !== id)
 
   if (selectedSpellId.value === id) {
@@ -247,6 +477,9 @@ function removeSpell(id) {
 
   latestComparison.value = null
   persistSpellbook()
+  statusMessage.value = removedSpell
+    ? `${removedSpell.name} deleted.`
+    : 'Template deleted.'
 }
 
 watch(
@@ -272,6 +505,25 @@ watch(
     }
   }
 )
+
+watch(activeGuideIndex, (index) => {
+  if (recordingMode.value !== 'attempt' || index < 0) {
+    return
+  }
+
+  if (index === lastHapticGuideIndex.value) {
+    return
+  }
+
+  lastHapticGuideIndex.value = index
+
+  if (index === 0) {
+    triggerHaptic([50, 40, 50])
+    return
+  }
+
+  triggerHaptic(35)
+})
 
 onMounted(() => {
   spellbook.value = loadSpellbook()
@@ -301,7 +553,7 @@ onMounted(() => {
       </div>
       <div class="status-orb">
         <span class="status-orb__ring"></span>
-        <strong>{{ recordingMode || 'idle' }}</strong>
+        <strong>{{ recordingLabel }}</strong>
         <small>{{ permissionState }}</small>
       </div>
     </section>
@@ -325,7 +577,7 @@ onMounted(() => {
       </div>
       <div>
         <p class="label">Recording</p>
-        <strong>{{ recordingMetrics.sampleCount }} samples</strong>
+        <strong>{{ capturedSamples.length }} samples</strong>
       </div>
     </section>
 
@@ -377,36 +629,62 @@ onMounted(() => {
           <div class="button-row">
             <button
               class="button button--primary"
-              :disabled="recordingMode === 'attempt'"
+              :disabled="!canStartTemplate"
               @click="startTemplateRecording"
             >
               Start Template
             </button>
             <button
               class="button button--ghost"
-              :disabled="recordingMode !== 'template'"
+              :disabled="!canSaveTemplate"
               @click="stopRecording"
             >
               Save Template
+            </button>
+            <button
+              class="button button--ghost"
+              :disabled="recordingMode !== 'template'"
+              @click="cancelRecording"
+            >
+              Cancel
             </button>
           </div>
 
           <div class="button-row">
             <button
               class="button button--secondary"
-              :disabled="recordingMode === 'template' || !selectedSpell"
+              :disabled="!canStartAttempt"
               @click="startAttemptRecording"
             >
               Start Copy Mode
             </button>
             <button
               class="button button--ghost"
-              :disabled="recordingMode !== 'attempt'"
+              :disabled="!canScoreAttempt"
               @click="stopRecording"
             >
               Score Copy
             </button>
+            <button
+              class="button button--ghost"
+              :disabled="recordingMode !== 'attempt'"
+              @click="cancelRecording"
+            >
+              Cancel
+            </button>
           </div>
+
+          <p class="comparison-copy">
+            <template v-if="recordingMode === 'template'">
+              Recording a new template. Move the phone now, then tap Save Template.
+            </template>
+            <template v-else-if="recordingMode === 'attempt'">
+              Copying {{ selectedSpell?.name }}. Follow the saved movement guide, then tap Score Copy.
+            </template>
+            <template v-else>
+              Start a template recording, or select a saved template and enter Copy Mode.
+            </template>
+          </p>
 
           <div class="metrics-grid">
             <article>
@@ -428,10 +706,41 @@ onMounted(() => {
           </div>
         </section>
 
+        <section class="panel stack">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Saved templates</p>
+              <h2>Choose a motion to copy</h2>
+            </div>
+            <p class="section-note">{{ spellbook.length }} available</p>
+          </div>
+
+          <div v-if="spellbook.length" class="template-list">
+            <article
+              v-for="spell in spellbook"
+              :key="spell.id"
+              class="template-item"
+              :class="{ 'template-item--selected': spell.id === selectedSpellId }"
+            >
+              <button class="template-item__body" @click="setSelectedSpell(spell.id)">
+                <strong>{{ spell.name }}</strong>
+                <span>{{ (spell.metrics.durationMs / 1000).toFixed(1) }}s</span>
+                <span>{{ spell.metrics.sampleCount }} samples</span>
+              </button>
+              <button class="template-item__delete" @click="removeSpell(spell.id)">
+                Delete
+              </button>
+            </article>
+          </div>
+          <p v-else class="empty-copy">
+            No saved templates yet. Record one first, then it will appear here for selection.
+          </p>
+        </section>
+
         <section class="panel stack" v-if="selectedSpell">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Selected spell</p>
+              <p class="eyebrow">Movement guide</p>
               <h2>{{ selectedSpell.name }}</h2>
             </div>
             <span class="chip">{{ selectedSpell.metrics.sampleCount }} samples</span>
@@ -443,9 +752,70 @@ onMounted(() => {
             <span>Heading span {{ selectedSpell.metrics.headingSpan }}°</span>
           </div>
 
+          <div v-if="selectedGuide.length" class="guide-progress">
+            <div class="guide-progress__header">
+              <span class="label">Copy progress</span>
+              <strong>
+                {{
+                  recordingMode === 'attempt'
+                    ? `${copyProgressPercent}%`
+                    : `${selectedGuide.length} phases`
+                }}
+              </strong>
+            </div>
+            <div class="guide-progress__track">
+              <span
+                class="guide-progress__fill"
+                :style="{ width: `${copyProgressPercent}%` }"
+              ></span>
+            </div>
+            <p class="comparison-copy">
+              <template v-if="recordingMode === 'attempt' && activeGuide">
+                Now: {{ activeGuide.motionSymbol }} {{ activeGuide.motionCue }} with
+                {{ activeGuide.wristSymbol }} {{ activeGuide.wristCue }} for
+                {{ activeGuide.durationLabel }}.
+              </template>
+              <template v-else>
+                Use the phase cards below as the literal movement path for the copy attempt.
+              </template>
+            </p>
+          </div>
+
+          <div v-if="selectedGuide.length" class="guide-cards">
+            <article
+              v-for="segment in selectedGuide"
+              :key="segment.index"
+              class="guide-card"
+              :class="{
+                'guide-card--active':
+                  recordingMode === 'attempt' && segment.index === activeGuideIndex
+              }"
+            >
+              <span class="guide-card__phase">Phase {{ segment.index + 1 }}</span>
+              <div class="guide-card__symbols">
+                <strong>{{ segment.motionSymbol }}</strong>
+                <strong>{{ segment.wristSymbol }}</strong>
+              </div>
+              <div class="guide-card__meta">
+                <span>{{ segment.motionCue }}</span>
+                <span>{{ segment.wristCue }}</span>
+              </div>
+              <p>{{ segment.stepText }}</p>
+            </article>
+          </div>
+
           <ol class="instruction-list">
-            <li v-for="step in selectedSpell.instructions" :key="step">{{ step }}</li>
+            <li
+              v-for="step in selectedGuide.length ? selectedGuide : selectedSpell.instructions"
+              :key="selectedGuide.length ? step.index : step"
+            >
+              {{ selectedGuide.length ? step.stepText : step }}
+            </li>
           </ol>
+
+          <p class="comparison-copy">
+            Select this template, tap Start Copy Mode, perform the steps above, then tap Score Copy.
+          </p>
         </section>
 
         <section class="panel stack" :data-tone="comparisonTone">
@@ -478,39 +848,5 @@ onMounted(() => {
       </div>
     </section>
 
-    <section class="panel spellbook">
-      <div class="section-head">
-        <div>
-          <p class="eyebrow">Spellbook</p>
-          <h2>Saved gestures</h2>
-        </div>
-        <p class="section-note">{{ spellbook.length }} stored locally on this device</p>
-      </div>
-
-      <div v-if="spellbook.length" class="spell-grid">
-        <article
-          v-for="spell in spellbook"
-          :key="spell.id"
-          class="spell-card"
-          :class="{ 'spell-card--selected': spell.id === selectedSpellId }"
-        >
-          <button class="spell-card__body" @click="setSelectedSpell(spell.id)">
-            <div class="spell-card__header">
-              <strong>{{ spell.name }}</strong>
-              <span>{{ new Date(spell.createdAt).toLocaleDateString() }}</span>
-            </div>
-            <div class="spell-card__meta">
-              <span>{{ (spell.metrics.durationMs / 1000).toFixed(1) }}s</span>
-              <span>{{ spell.metrics.sampleCount }} pts</span>
-              <span>{{ spell.metrics.peakRotation }}°/s</span>
-            </div>
-          </button>
-          <button class="spell-card__delete" @click="removeSpell(spell.id)">Delete</button>
-        </article>
-      </div>
-      <p v-else class="empty-copy">
-        No spells yet. Record a template gesture and save it into the spellbook.
-      </p>
-    </section>
   </main>
 </template>
