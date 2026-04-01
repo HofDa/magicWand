@@ -37,6 +37,15 @@ const latestComparison = ref(null)
 const statusMessage = ref('Enable the sensors and move the phone like a wand.')
 const lastHapticGuideIndex = ref(-1)
 const audioFeedbackMode = ref('none')
+const safeDialEnabled = ref(false)
+const safeDialZeroAngle = ref(0)
+const safeDialLastAngle = ref(null)
+const safeDialAccumulatedAngle = ref(0)
+const safeDialNotchIndex = ref(0)
+const safeDialTickCount = ref(0)
+const safeDialLastDelta = ref(0)
+
+const SAFE_DIAL_NOTCH_DEGREES = 12
 
 const accelTraceFields = [
   { label: 'ax', path: 'acceleration.x', color: '#ff9c73', scale: 12 },
@@ -62,6 +71,50 @@ const selectedGuideDurationMs = computed(() => {
   }
 
   return selectedSpell.value?.metrics.durationMs ?? 0
+})
+const safeDialAbsoluteAngle = computed(() => {
+  const heading = currentSample.value.orientation.compassHeading
+
+  if (typeof heading === 'number') {
+    return heading
+  }
+
+  const alpha = currentSample.value.orientation.alpha
+
+  if (typeof alpha === 'number') {
+    return ((360 - alpha + 360) % 360)
+  }
+
+  return null
+})
+const safeDialRelativeAngle = computed(() => {
+  if (safeDialAbsoluteAngle.value == null) {
+    return null
+  }
+
+  return ((safeDialAbsoluteAngle.value - safeDialZeroAngle.value + 360) % 360)
+})
+const safeDialTurnDisplay = computed(() => {
+  const signed = Math.round(safeDialAccumulatedAngle.value)
+  return `${signed >= 0 ? '+' : ''}${signed}°`
+})
+const safeDialDirectionLabel = computed(() => {
+  if (Math.abs(safeDialLastDelta.value) < 1.5) {
+    return 'Holding'
+  }
+
+  return safeDialLastDelta.value > 0 ? 'Clockwise' : 'Counter-clockwise'
+})
+const safeDialFeedbackLabel = computed(() => {
+  if (audioFeedbackMode.value === 'vibrate') {
+    return 'Haptic detents'
+  }
+
+  if (audioFeedbackMode.value === 'audio') {
+    return 'Audio detents'
+  }
+
+  return 'Visual only'
 })
 
 const liveAcceleration = computed(() => [
@@ -327,6 +380,70 @@ function feedbackHint() {
   return 'Phase cues are visual only on this device.'
 }
 
+function wrapAngleDelta(current, previous) {
+  return ((current - previous + 540) % 360) - 180
+}
+
+function buildTickPattern(stepCount) {
+  const cappedSteps = Math.max(1, Math.min(stepCount, 4))
+  const pattern = []
+
+  for (let index = 0; index < cappedSteps; index += 1) {
+    pattern.push(14)
+
+    if (index < cappedSteps - 1) {
+      pattern.push(24)
+    }
+  }
+
+  return pattern
+}
+
+function getSafeDialNotchIndex(angle) {
+  if (angle >= 0) {
+    return Math.floor(angle / SAFE_DIAL_NOTCH_DEGREES)
+  }
+
+  return Math.ceil(angle / SAFE_DIAL_NOTCH_DEGREES)
+}
+
+function resetSafeDialBaseline(angle = safeDialAbsoluteAngle.value) {
+  safeDialZeroAngle.value = angle ?? 0
+  safeDialLastAngle.value = angle
+  safeDialAccumulatedAngle.value = 0
+  safeDialNotchIndex.value = 0
+  safeDialTickCount.value = 0
+  safeDialLastDelta.value = 0
+}
+
+async function toggleSafeDial() {
+  if (safeDialEnabled.value) {
+    safeDialEnabled.value = false
+    safeDialLastAngle.value = safeDialAbsoluteAngle.value
+    statusMessage.value = 'Safe dial off.'
+    return
+  }
+
+  await primePhaseFeedback()
+
+  const ready = await ensureSensorsReady(
+    `Safe dial active. Rotate the phone to feel the detents. ${feedbackHint()}`
+  )
+  if (!ready) {
+    return
+  }
+
+  safeDialEnabled.value = true
+  resetSafeDialBaseline()
+  triggerHaptic(22)
+}
+
+function calibrateSafeDial() {
+  resetSafeDialBaseline()
+  triggerHaptic(20)
+  statusMessage.value = 'Safe dial zero reset.'
+}
+
 function persistSpellbook() {
   return saveSpellbook(spellbook.value)
 }
@@ -516,6 +633,43 @@ watch(activeGuideIndex, (index) => {
   }
 
   triggerHaptic(35)
+})
+
+watch(safeDialAbsoluteAngle, (angle) => {
+  if (!safeDialEnabled.value || angle == null) {
+    return
+  }
+
+  if (recordingMode.value) {
+    safeDialLastAngle.value = angle
+    return
+  }
+
+  if (safeDialLastAngle.value == null) {
+    safeDialLastAngle.value = angle
+    return
+  }
+
+  const delta = wrapAngleDelta(angle, safeDialLastAngle.value)
+  safeDialLastAngle.value = angle
+
+  if (Math.abs(delta) < 1.5) {
+    return
+  }
+
+  safeDialLastDelta.value = delta
+  safeDialAccumulatedAngle.value += delta
+
+  const nextNotchIndex = getSafeDialNotchIndex(safeDialAccumulatedAngle.value)
+  const crossedSteps = Math.abs(nextNotchIndex - safeDialNotchIndex.value)
+
+  if (!crossedSteps) {
+    return
+  }
+
+  safeDialTickCount.value += crossedSteps
+  safeDialNotchIndex.value = nextNotchIndex
+  triggerHaptic(buildTickPattern(crossedSteps))
 })
 
 onMounted(() => {
@@ -731,6 +885,61 @@ onBeforeUnmount(() => {
           </div>
           <p v-else class="empty-copy">
             No saved templates yet. Record one first, then it will appear here for selection.
+          </p>
+        </section>
+
+        <section class="panel stack">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Mini mode</p>
+              <h2>Safe dial</h2>
+            </div>
+            <span class="chip">{{ safeDialFeedbackLabel }}</span>
+          </div>
+
+          <div class="safe-dial">
+            <div class="safe-dial__wheel">
+              <span class="safe-dial__marker safe-dial__marker--top"></span>
+              <span
+                class="safe-dial__needle"
+                :style="{
+                  transform: `translateX(-50%) rotate(${safeDialRelativeAngle ?? 0}deg)`
+                }"
+              ></span>
+              <strong>
+                {{
+                  safeDialRelativeAngle == null
+                    ? 'n/a'
+                    : `${safeDialRelativeAngle.toFixed(0)}°`
+                }}
+              </strong>
+              <small>{{ safeDialEnabled ? 'active' : 'off' }}</small>
+            </div>
+
+            <div class="safe-dial__stats">
+              <span>Turn {{ safeDialTurnDisplay }}</span>
+              <span>Notch {{ safeDialNotchIndex }}</span>
+              <span>{{ safeDialDirectionLabel }}</span>
+              <span>{{ safeDialTickCount }} ticks</span>
+            </div>
+          </div>
+
+          <div class="button-row">
+            <button class="button button--secondary" @click="toggleSafeDial">
+              {{ safeDialEnabled ? 'Stop Safe Dial' : 'Start Safe Dial' }}
+            </button>
+            <button
+              class="button button--ghost"
+              :disabled="!safeDialEnabled"
+              @click="calibrateSafeDial"
+            >
+              Set Zero
+            </button>
+          </div>
+
+          <p class="comparison-copy">
+            Rotate the phone around its vertical axis. The dial emits a tick every
+            {{ SAFE_DIAL_NOTCH_DEGREES }}° and uses haptics when available, otherwise short beeps.
           </p>
         </section>
 

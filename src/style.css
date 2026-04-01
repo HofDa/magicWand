@@ -488,6 +488,99 @@ button {
   font-size: 0.92rem;
 }
 
+.safe-dial {
+  display: grid;
+  grid-template-columns: minmax(140px, 180px) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: center;
+}
+
+.safe-dial__wheel {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: min(46vw, 180px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  margin: 0 auto;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.06), transparent 46%),
+    conic-gradient(
+      from 0deg,
+      rgba(255, 213, 107, 0.26),
+      rgba(126, 213, 255, 0.18),
+      rgba(255, 156, 115, 0.28),
+      rgba(255, 213, 107, 0.26)
+    );
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.safe-dial__wheel::after {
+  content: '';
+  position: absolute;
+  inset: 18px;
+  border-radius: 50%;
+  background: rgba(10, 10, 20, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.safe-dial__marker,
+.safe-dial__needle,
+.safe-dial__wheel strong,
+.safe-dial__wheel small {
+  position: relative;
+  z-index: 1;
+}
+
+.safe-dial__marker--top {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  width: 4px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--accent-gold);
+  transform: translateX(-50%);
+  box-shadow: 0 0 14px rgba(255, 213, 107, 0.4);
+}
+
+.safe-dial__needle {
+  position: absolute;
+  left: 50%;
+  top: 18%;
+  transform-origin: 50% 126%;
+  width: 3px;
+  height: 34%;
+  border-radius: 999px;
+  background: linear-gradient(180deg, var(--accent-coral), var(--accent-sky));
+  box-shadow: 0 0 14px rgba(126, 213, 255, 0.32);
+}
+
+.safe-dial__wheel strong {
+  font-size: 1.7rem;
+}
+
+.safe-dial__wheel small {
+  margin-top: 1.8rem;
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.safe-dial__stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+}
+
+.safe-dial__stats span {
+  padding: 0.45rem 0.7rem;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-soft);
+  font-size: 0.88rem;
+}
+
 .score-card {
   display: inline-grid;
   grid-auto-flow: column;
@@ -613,6 +706,10 @@ button {
 
   .section-head {
     flex-direction: column;
+  }
+
+  .safe-dial {
+    grid-template-columns: 1fr;
   }
 
   .template-item {
