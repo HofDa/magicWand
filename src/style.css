@@ -240,6 +240,10 @@ button {
   padding: 0.9rem 1rem;
 }
 
+.field--compact input {
+  padding: 0.72rem 0.85rem;
+}
+
 .metrics-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -488,6 +492,90 @@ button {
   font-size: 0.92rem;
 }
 
+.safe-dial-presets,
+.safe-sequence-track {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+}
+
+.safe-dial-presets .button {
+  padding: 0.7rem 0.95rem;
+}
+
+.safe-sequence-editor {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.safe-sequence-step,
+.safe-sequence-track__card {
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.safe-sequence-step {
+  padding: 0.9rem;
+  display: grid;
+  gap: 0.75rem;
+}
+
+.safe-sequence-step--active,
+.safe-sequence-track__card--active {
+  border-color: rgba(126, 213, 255, 0.42);
+  box-shadow: 0 0 0 1px rgba(126, 213, 255, 0.22) inset;
+}
+
+.safe-sequence-step--done,
+.safe-sequence-track__card--done {
+  border-color: rgba(123, 230, 191, 0.32);
+  background: linear-gradient(180deg, rgba(123, 230, 191, 0.08), rgba(255, 255, 255, 0.04));
+}
+
+.safe-sequence-step__header,
+.safe-sequence-step__controls {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.safe-sequence-step__header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+
+.safe-sequence-step__header span {
+  color: var(--text-soft);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.safe-sequence-step__controls {
+  grid-template-columns: minmax(0, 1fr) 120px;
+  align-items: end;
+}
+
+.direction-toggle {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.45rem;
+}
+
+.direction-toggle__button {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-soft);
+  padding: 0.8rem 0.9rem;
+}
+
+.direction-toggle__button--active {
+  background: linear-gradient(135deg, rgba(255, 213, 107, 0.22), rgba(126, 213, 255, 0.2));
+  color: #fff6df;
+  border-color: rgba(255, 213, 107, 0.3);
+}
+
 .safe-dial {
   display: grid;
   grid-template-columns: minmax(140px, 180px) minmax(0, 1fr);
@@ -579,6 +667,33 @@ button {
   background: rgba(255, 255, 255, 0.06);
   color: var(--text-soft);
   font-size: 0.88rem;
+}
+
+.safe-dial__target {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.safe-dial__target h3 {
+  margin: 0;
+  font-family: 'Cinzel', Georgia, serif;
+  font-size: clamp(1.3rem, 2vw, 2rem);
+}
+
+.safe-sequence-track__card {
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.8rem 0.9rem;
+  min-width: 120px;
+}
+
+.safe-sequence-track__card strong {
+  font-size: 1.25rem;
+}
+
+.safe-sequence-track__card span,
+.safe-sequence-track__card small {
+  color: var(--text-soft);
 }
 
 .score-card {
@@ -709,6 +824,10 @@ button {
   }
 
   .safe-dial {
+    grid-template-columns: 1fr;
+  }
+
+  .safe-sequence-step__controls {
     grid-template-columns: 1fr;
   }
 

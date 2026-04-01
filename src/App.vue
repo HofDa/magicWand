@@ -41,11 +41,17 @@ const safeDialEnabled = ref(false)
 const safeDialZeroAngle = ref(0)
 const safeDialLastAngle = ref(null)
 const safeDialAccumulatedAngle = ref(0)
-const safeDialNotchIndex = ref(0)
-const safeDialTickCount = ref(0)
 const safeDialLastDelta = ref(0)
+const safeDialSequence = ref([
+  { id: createSpellId(), direction: 'cw', degrees: 90 },
+  { id: createSpellId(), direction: 'ccw', degrees: 50 }
+])
+const safeDialStepIndex = ref(0)
+const safeDialStepStartTurn = ref(0)
+const safeDialGuideTickIndex = ref(0)
+const safeDialLastCompletedStep = ref(-1)
 
-const SAFE_DIAL_NOTCH_DEGREES = 12
+const SAFE_DIAL_GUIDE_DEGREES = 10
 
 const accelTraceFields = [
   { label: 'ax', path: 'acceleration.x', color: '#ff9c73', scale: 12 },
@@ -94,6 +100,55 @@ const safeDialRelativeAngle = computed(() => {
 
   return ((safeDialAbsoluteAngle.value - safeDialZeroAngle.value + 360) % 360)
 })
+const safeDialCurrentStep = computed(
+  () => safeDialSequence.value[safeDialStepIndex.value] ?? null
+)
+const safeDialSequenceComplete = computed(
+  () => safeDialEnabled.value && safeDialStepIndex.value >= safeDialSequence.value.length
+)
+const safeDialTotalDegrees = computed(() =>
+  safeDialSequence.value.reduce((total, step) => total + getSafeDialStepDegrees(step), 0)
+)
+const safeDialSignedStepProgress = computed(() => {
+  if (!safeDialCurrentStep.value) {
+    return 0
+  }
+
+  const rawProgress = safeDialAccumulatedAngle.value - safeDialStepStartTurn.value
+  return safeDialCurrentStep.value.direction === 'cw' ? rawProgress : -rawProgress
+})
+const safeDialStepProgress = computed(() =>
+  Math.max(0, safeDialSignedStepProgress.value)
+)
+const safeDialStepRemaining = computed(() => {
+  if (!safeDialCurrentStep.value) {
+    return 0
+  }
+
+  return Math.max(
+    0,
+    getSafeDialStepDegrees(safeDialCurrentStep.value) - safeDialStepProgress.value
+  )
+})
+const safeDialSequenceProgressPercent = computed(() => {
+  if (!safeDialTotalDegrees.value) {
+    return 0
+  }
+
+  const completedDegrees = safeDialSequence.value
+    .slice(0, safeDialStepIndex.value)
+    .reduce((total, step) => total + getSafeDialStepDegrees(step), 0)
+
+  const inFlightDegrees = safeDialCurrentStep.value
+    ? Math.min(getSafeDialStepDegrees(safeDialCurrentStep.value), safeDialStepProgress.value)
+    : 0
+
+  return Math.min(
+    100,
+    Math.round(((completedDegrees + inFlightDegrees) / safeDialTotalDegrees.value) * 100)
+  )
+})
+const safeDialWrongDirection = computed(() => safeDialSignedStepProgress.value < -5)
 const safeDialTurnDisplay = computed(() => {
   const signed = Math.round(safeDialAccumulatedAngle.value)
   return `${signed >= 0 ? '+' : ''}${signed}°`
@@ -107,14 +162,46 @@ const safeDialDirectionLabel = computed(() => {
 })
 const safeDialFeedbackLabel = computed(() => {
   if (audioFeedbackMode.value === 'vibrate') {
-    return 'Haptic detents'
+    return 'Haptic lock cues'
   }
 
   if (audioFeedbackMode.value === 'audio') {
-    return 'Audio detents'
+    return 'Audio lock cues'
   }
 
   return 'Visual only'
+})
+const safeDialCurrentInstruction = computed(() => {
+  if (safeDialSequenceComplete.value) {
+    return 'Sequence complete'
+  }
+
+  if (!safeDialCurrentStep.value) {
+    return 'No sequence loaded'
+  }
+
+  return `Turn ${formatSafeDialDirection(safeDialCurrentStep.value.direction)} ${getSafeDialStepDegrees(
+    safeDialCurrentStep.value
+  )}°`
+})
+const safeDialGuidanceCopy = computed(() => {
+  if (safeDialSequenceComplete.value) {
+    return 'Strong confirmation fired. Restart the sequence to run it again.'
+  }
+
+  if (!safeDialCurrentStep.value) {
+    return 'Add at least one step to arm the dial trainer.'
+  }
+
+  if (!safeDialEnabled.value) {
+    return 'Set the sequence, then arm the dial and rotate the phone like a lock dial.'
+  }
+
+  if (safeDialWrongDirection.value) {
+    return 'Reverse direction. You are moving away from the current target.'
+  }
+
+  return `${safeDialStepRemaining.value.toFixed(0)}° remaining on this step. Light cues mark progress, strong confirmation marks the target.`
 })
 
 const liveAcceleration = computed(() => [
@@ -384,64 +471,140 @@ function wrapAngleDelta(current, previous) {
   return ((current - previous + 540) % 360) - 180
 }
 
-function buildTickPattern(stepCount) {
-  const cappedSteps = Math.max(1, Math.min(stepCount, 4))
-  const pattern = []
-
-  for (let index = 0; index < cappedSteps; index += 1) {
-    pattern.push(14)
-
-    if (index < cappedSteps - 1) {
-      pattern.push(24)
-    }
-  }
-
-  return pattern
+function buildTickPattern(duration = 12) {
+  return duration
 }
 
-function getSafeDialNotchIndex(angle) {
-  if (angle >= 0) {
-    return Math.floor(angle / SAFE_DIAL_NOTCH_DEGREES)
-  }
+function getSafeDialStepDegrees(step) {
+  return Math.max(5, Math.min(360, Math.round(Number(step?.degrees) || 0)))
+}
 
-  return Math.ceil(angle / SAFE_DIAL_NOTCH_DEGREES)
+function formatSafeDialDirection(direction) {
+  return direction === 'cw' ? 'right / clockwise' : 'left / counter-clockwise'
+}
+
+function getSafeDialDirectionSymbol(direction) {
+  return direction === 'cw' ? '↻' : '↺'
+}
+
+function createSafeDialStep(direction = 'cw', degrees = 90) {
+  return {
+    id: createSpellId(),
+    direction,
+    degrees
+  }
 }
 
 function resetSafeDialBaseline(angle = safeDialAbsoluteAngle.value) {
   safeDialZeroAngle.value = angle ?? 0
   safeDialLastAngle.value = angle
   safeDialAccumulatedAngle.value = 0
-  safeDialNotchIndex.value = 0
-  safeDialTickCount.value = 0
   safeDialLastDelta.value = 0
+  safeDialStepIndex.value = 0
+  safeDialStepStartTurn.value = 0
+  safeDialGuideTickIndex.value = 0
+  safeDialLastCompletedStep.value = -1
 }
 
-async function toggleSafeDial() {
-  if (safeDialEnabled.value) {
-    safeDialEnabled.value = false
-    safeDialLastAngle.value = safeDialAbsoluteAngle.value
-    statusMessage.value = 'Safe dial off.'
+function loadSafeDialPreset(presetName) {
+  const presets = {
+    quick: [
+      createSafeDialStep('cw', 90),
+      createSafeDialStep('ccw', 50)
+    ],
+    vault: [
+      createSafeDialStep('cw', 120),
+      createSafeDialStep('ccw', 80),
+      createSafeDialStep('cw', 40)
+    ],
+    reverse: [
+      createSafeDialStep('ccw', 60),
+      createSafeDialStep('cw', 110),
+      createSafeDialStep('ccw', 30)
+    ]
+  }
+
+  safeDialSequence.value = presets[presetName].map((step) => ({ ...step }))
+  safeDialEnabled.value = false
+  resetSafeDialBaseline()
+  statusMessage.value = 'Safe dial preset loaded.'
+}
+
+function addSafeDialStep(direction = 'cw') {
+  safeDialSequence.value = [...safeDialSequence.value, createSafeDialStep(direction, 45)]
+}
+
+function removeSafeDialStep(stepId) {
+  if (safeDialSequence.value.length === 1) {
     return
   }
 
+  safeDialSequence.value = safeDialSequence.value.filter((step) => step.id !== stepId)
+  if (safeDialStepIndex.value >= safeDialSequence.value.length) {
+    safeDialStepIndex.value = safeDialSequence.value.length - 1
+  }
+}
+
+function triggerSafeDialTargetFeedback(isFinal = false) {
+  if (isFinal) {
+    if (canVibrate()) {
+      audioFeedbackMode.value = 'vibrate'
+      navigator.vibrate([180, 50, 180, 60, 240])
+      return
+    }
+
+    if (audioFeedbackMode.value === 'audio') {
+      playBeepPattern([120, 40, 150, 40, 220])
+    }
+    return
+  }
+
+  if (canVibrate()) {
+    audioFeedbackMode.value = 'vibrate'
+    navigator.vibrate([120, 45, 120])
+    return
+  }
+
+  if (audioFeedbackMode.value === 'audio') {
+    playBeepPattern([90, 35, 120])
+  }
+}
+
+async function startSafeDialSequence() {
   await primePhaseFeedback()
 
   const ready = await ensureSensorsReady(
-    `Safe dial active. Rotate the phone to feel the detents. ${feedbackHint()}`
+    `Safe dial armed. ${safeDialCurrentInstruction.value}. ${feedbackHint()}`
   )
   if (!ready) {
     return
   }
 
+  safeDialSequence.value = safeDialSequence.value.map((step) => ({
+    ...step,
+    degrees: getSafeDialStepDegrees(step)
+  }))
   safeDialEnabled.value = true
   resetSafeDialBaseline()
-  triggerHaptic(22)
+  triggerSafeDialTargetFeedback(false)
+}
+
+function stopSafeDial() {
+  if (!safeDialEnabled.value) {
+    return
+  }
+
+  safeDialEnabled.value = false
+  safeDialLastAngle.value = safeDialAbsoluteAngle.value
+  statusMessage.value = 'Safe dial trainer off.'
 }
 
 function calibrateSafeDial() {
   resetSafeDialBaseline()
   triggerHaptic(20)
-  statusMessage.value = 'Safe dial zero reset.'
+  statusMessage.value = safeDialEnabled.value
+    ? `Safe dial zero reset. ${safeDialCurrentInstruction.value}.`
+    : 'Safe dial zero reset.'
 }
 
 function persistSpellbook() {
@@ -660,16 +823,39 @@ watch(safeDialAbsoluteAngle, (angle) => {
   safeDialLastDelta.value = delta
   safeDialAccumulatedAngle.value += delta
 
-  const nextNotchIndex = getSafeDialNotchIndex(safeDialAccumulatedAngle.value)
-  const crossedSteps = Math.abs(nextNotchIndex - safeDialNotchIndex.value)
-
-  if (!crossedSteps) {
+  if (!safeDialCurrentStep.value) {
     return
   }
 
-  safeDialTickCount.value += crossedSteps
-  safeDialNotchIndex.value = nextNotchIndex
-  triggerHaptic(buildTickPattern(crossedSteps))
+  const stepDegrees = getSafeDialStepDegrees(safeDialCurrentStep.value)
+  const progress = safeDialStepProgress.value
+  const nextGuideTick = Math.floor(Math.min(progress, stepDegrees) / SAFE_DIAL_GUIDE_DEGREES)
+
+  if (nextGuideTick > safeDialGuideTickIndex.value && progress < stepDegrees) {
+    safeDialGuideTickIndex.value = nextGuideTick
+    triggerHaptic(buildTickPattern(10))
+  }
+
+  if (progress < stepDegrees) {
+    return
+  }
+
+  const completedIndex = safeDialStepIndex.value
+  const isFinalStep = completedIndex >= safeDialSequence.value.length - 1
+
+  safeDialLastCompletedStep.value = completedIndex
+  triggerSafeDialTargetFeedback(isFinalStep)
+
+  if (isFinalStep) {
+    safeDialStepIndex.value = safeDialSequence.value.length
+    statusMessage.value = 'Safe dial sequence complete.'
+    return
+  }
+
+  safeDialStepIndex.value += 1
+  safeDialStepStartTurn.value = safeDialAccumulatedAngle.value
+  safeDialGuideTickIndex.value = 0
+  statusMessage.value = `Step ${completedIndex + 1} locked. Next: ${safeDialCurrentInstruction.value}.`
 })
 
 onMounted(() => {
@@ -891,10 +1077,106 @@ onBeforeUnmount(() => {
         <section class="panel stack">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Mini mode</p>
-              <h2>Safe dial</h2>
+              <p class="eyebrow">Lock trainer</p>
+              <h2>Safe dial sequence</h2>
             </div>
             <span class="chip">{{ safeDialFeedbackLabel }}</span>
+          </div>
+
+          <div class="safe-dial-presets">
+            <button
+              class="button button--ghost"
+              :disabled="safeDialEnabled"
+              @click="loadSafeDialPreset('quick')"
+            >
+              90R / 50L
+            </button>
+            <button
+              class="button button--ghost"
+              :disabled="safeDialEnabled"
+              @click="loadSafeDialPreset('vault')"
+            >
+              120R / 80L / 40R
+            </button>
+            <button
+              class="button button--ghost"
+              :disabled="safeDialEnabled"
+              @click="loadSafeDialPreset('reverse')"
+            >
+              60L / 110R / 30L
+            </button>
+          </div>
+
+          <div class="safe-sequence-editor">
+            <article
+              v-for="(step, index) in safeDialSequence"
+              :key="step.id"
+              class="safe-sequence-step"
+              :class="{
+                'safe-sequence-step--active':
+                  safeDialEnabled && index === safeDialStepIndex && !safeDialSequenceComplete,
+                'safe-sequence-step--done': index <= safeDialLastCompletedStep
+              }"
+            >
+              <div class="safe-sequence-step__header">
+                <span>Step {{ index + 1 }}</span>
+                <button
+                  class="template-item__delete"
+                  :disabled="safeDialSequence.length === 1 || safeDialEnabled"
+                  @click="removeSafeDialStep(step.id)"
+                >
+                  Remove
+                </button>
+              </div>
+              <div class="safe-sequence-step__controls">
+                <div class="direction-toggle">
+                  <button
+                    class="direction-toggle__button"
+                    :class="{ 'direction-toggle__button--active': step.direction === 'cw' }"
+                    :disabled="safeDialEnabled"
+                    @click="step.direction = 'cw'"
+                  >
+                    Right / CW
+                  </button>
+                  <button
+                    class="direction-toggle__button"
+                    :class="{ 'direction-toggle__button--active': step.direction === 'ccw' }"
+                    :disabled="safeDialEnabled"
+                    @click="step.direction = 'ccw'"
+                  >
+                    Left / CCW
+                  </button>
+                </div>
+                <label class="field field--compact">
+                  <span>Degrees</span>
+                  <input
+                    v-model.number="step.degrees"
+                    type="number"
+                    min="5"
+                    max="360"
+                    step="1"
+                    :disabled="safeDialEnabled"
+                  />
+                </label>
+              </div>
+            </article>
+          </div>
+
+          <div class="button-row">
+            <button
+              class="button button--secondary"
+              :disabled="safeDialEnabled"
+              @click="addSafeDialStep('cw')"
+            >
+              Add Right Step
+            </button>
+            <button
+              class="button button--ghost"
+              :disabled="safeDialEnabled"
+              @click="addSafeDialStep('ccw')"
+            >
+              Add Left Step
+            </button>
           </div>
 
           <div class="safe-dial">
@@ -916,30 +1198,79 @@ onBeforeUnmount(() => {
               <small>{{ safeDialEnabled ? 'active' : 'off' }}</small>
             </div>
 
-            <div class="safe-dial__stats">
-              <span>Turn {{ safeDialTurnDisplay }}</span>
-              <span>Notch {{ safeDialNotchIndex }}</span>
-              <span>{{ safeDialDirectionLabel }}</span>
-              <span>{{ safeDialTickCount }} ticks</span>
+            <div class="safe-dial__target">
+              <p class="eyebrow">Current target</p>
+              <h3>{{ safeDialCurrentInstruction }}</h3>
+              <div class="safe-dial__stats">
+                <span>Turn {{ safeDialTurnDisplay }}</span>
+                <span>
+                  {{
+                    safeDialCurrentStep
+                      ? `${safeDialStepRemaining.toFixed(0)}° remaining`
+                      : 'Done'
+                  }}
+                </span>
+                <span>{{ safeDialDirectionLabel }}</span>
+                <span>{{ safeDialSequenceProgressPercent }}% sequence</span>
+              </div>
+              <div class="guide-progress">
+                <div class="guide-progress__track">
+                  <span
+                    class="guide-progress__fill"
+                    :style="{ width: `${safeDialSequenceProgressPercent}%` }"
+                  ></span>
+                </div>
+              </div>
+              <p class="comparison-copy">
+                {{ safeDialGuidanceCopy }}
+              </p>
             </div>
           </div>
 
+          <div class="safe-sequence-track">
+            <article
+              v-for="(step, index) in safeDialSequence"
+              :key="`${step.id}-track`"
+              class="safe-sequence-track__card"
+              :class="{
+                'safe-sequence-track__card--active':
+                  safeDialEnabled && index === safeDialStepIndex && !safeDialSequenceComplete,
+                'safe-sequence-track__card--done': index <= safeDialLastCompletedStep
+              }"
+            >
+              <strong>{{ getSafeDialDirectionSymbol(step.direction) }}</strong>
+              <span>{{ formatSafeDialDirection(step.direction) }}</span>
+              <small>{{ getSafeDialStepDegrees(step) }}°</small>
+            </article>
+          </div>
+
           <div class="button-row">
-            <button class="button button--secondary" @click="toggleSafeDial">
-              {{ safeDialEnabled ? 'Stop Safe Dial' : 'Start Safe Dial' }}
+            <button class="button button--secondary" @click="startSafeDialSequence">
+              {{
+                safeDialEnabled
+                  ? (safeDialSequenceComplete ? 'Run Again' : 'Restart Sequence')
+                  : 'Start Sequence'
+              }}
             </button>
             <button
               class="button button--ghost"
               :disabled="!safeDialEnabled"
+              @click="stopSafeDial"
+            >
+              Stop
+            </button>
+            <button
+              class="button button--ghost"
+              :disabled="!isListening && safeDialAbsoluteAngle == null"
               @click="calibrateSafeDial"
             >
-              Set Zero
+              Set Current Zero
             </button>
           </div>
 
           <p class="comparison-copy">
-            Rotate the phone around its vertical axis. The dial emits a tick every
-            {{ SAFE_DIAL_NOTCH_DEGREES }}° and uses haptics when available, otherwise short beeps.
+            Build a real sequence like a lock combination. The dial gives light guide cues
+            every {{ SAFE_DIAL_GUIDE_DEGREES }}° and a strong confirmation exactly when a step locks.
           </p>
         </section>
 
