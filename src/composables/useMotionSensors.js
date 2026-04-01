@@ -32,6 +32,7 @@ function makeRotation(source) {
 
 function createEmptySample() {
   return {
+    sequence: 0,
     timestamp: 0,
     interval: null,
     acceleration: makeVector(),
@@ -70,13 +71,21 @@ export function useMotionSensors() {
   const currentSample = ref(createEmptySample())
   const history = ref([])
   const lastError = ref('')
+  const sampleRevision = ref(0)
+  let sampleSequence = 0
 
   let lastOrientation = createEmptySample().orientation
   let removeListeners = () => {}
 
   function pushSample(sample) {
-    currentSample.value = sample
-    history.value = [...history.value.slice(-(HISTORY_LIMIT - 1)), sample]
+    const nextSample = {
+      ...sample,
+      sequence: ++sampleSequence
+    }
+
+    currentSample.value = nextSample
+    history.value = [...history.value.slice(-(HISTORY_LIMIT - 1)), nextSample]
+    sampleRevision.value += 1
   }
 
   function handleMotion(event) {
@@ -205,6 +214,7 @@ export function useMotionSensors() {
     isListening: computed(() => listening.value),
     lastError,
     permissionState,
+    sampleRevision,
     start,
     stop,
     supportState

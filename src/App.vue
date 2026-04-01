@@ -24,6 +24,7 @@ const {
   isListening,
   lastError,
   permissionState,
+  sampleRevision,
   start
 } = useMotionSensors()
 
@@ -32,7 +33,6 @@ const spellName = ref('Lumos Arc')
 const recordingMode = ref('')
 const capturedSamples = ref([])
 const selectedSpellId = ref('')
-const lastCapturedTimestamp = ref(0)
 const latestComparison = ref(null)
 const statusMessage = ref('Enable the sensors and move the phone like a wand.')
 const lastHapticGuideIndex = ref(-1)
@@ -328,7 +328,7 @@ function feedbackHint() {
 }
 
 function persistSpellbook() {
-  saveSpellbook(spellbook.value)
+  return saveSpellbook(spellbook.value)
 }
 
 function setSelectedSpell(id) {
@@ -360,7 +360,6 @@ async function ensureSensorsReady(nextMessage) {
 function resetCapture(mode) {
   recordingMode.value = mode
   capturedSamples.value = []
-  lastCapturedTimestamp.value = 0
   latestComparison.value = null
   lastHapticGuideIndex.value = -1
 }
@@ -412,7 +411,6 @@ function cancelRecording() {
   const cancelledMode = recordingMode.value
   recordingMode.value = ''
   capturedSamples.value = []
-  lastCapturedTimestamp.value = 0
   lastHapticGuideIndex.value = -1
   statusMessage.value =
     cancelledMode === 'template'
@@ -448,8 +446,10 @@ function stopRecording() {
 
     spellbook.value = [spell, ...spellbook.value].slice(0, 18)
     setSelectedSpell(spell.id)
-    persistSpellbook()
-    statusMessage.value = `${spell.name} saved. Select it below and use Copy Mode to mimic it.`
+    const persisted = persistSpellbook()
+    statusMessage.value = persisted
+      ? `${spell.name} saved. Select it below and use Copy Mode to mimic it.`
+      : `${spell.name} was recorded, but this browser blocked local storage. Keep this tab open or enable storage access.`
   } else if (selectedSpell.value) {
     latestComparison.value = compareRecordings(
       selectedSpell.value.samples,
@@ -483,9 +483,9 @@ function removeSpell(id) {
 }
 
 watch(
-  () => currentSample.value.timestamp,
-  (timestamp) => {
-    if (!recordingMode.value || !timestamp || timestamp === lastCapturedTimestamp.value) {
+  sampleRevision,
+  () => {
+    if (!recordingMode.value || !currentSample.value.timestamp) {
       return
     }
 
@@ -493,7 +493,6 @@ watch(
       ...capturedSamples.value,
       cloneSample(currentSample.value)
     ]
-    lastCapturedTimestamp.value = timestamp
   }
 )
 

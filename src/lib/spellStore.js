@@ -34,10 +34,15 @@ export function loadSpellbook() {
 
 export function saveSpellbook(spells) {
   if (typeof localStorage === 'undefined') {
-    return
+    return false
   }
 
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(spells))
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(spells))
+    return true
+  } catch {
+    return false
+  }
 }
 
 export function buildSpellRecord(baseSpell) {
@@ -46,4 +51,3 @@ export function buildSpellRecord(baseSpell) {
     samples: cloneSamples(baseSpell.samples)
   }
 }
-
