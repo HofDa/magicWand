@@ -492,169 +492,6 @@ button {
   font-size: 0.92rem;
 }
 
-.safe-dial-presets,
-.safe-sequence-track {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.7rem;
-}
-
-.safe-dial-presets .button {
-  padding: 0.7rem 0.95rem;
-}
-
-.safe-sequence-editor {
-  display: grid;
-  gap: 0.85rem;
-}
-
-.safe-sequence-step,
-.safe-sequence-track__card {
-  border-radius: 22px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.safe-sequence-step {
-  padding: 0.9rem;
-  display: grid;
-  gap: 0.75rem;
-}
-
-.safe-sequence-step--active,
-.safe-sequence-track__card--active {
-  border-color: rgba(126, 213, 255, 0.42);
-  box-shadow: 0 0 0 1px rgba(126, 213, 255, 0.22) inset;
-}
-
-.safe-sequence-step--done,
-.safe-sequence-track__card--done {
-  border-color: rgba(123, 230, 191, 0.32);
-  background: linear-gradient(180deg, rgba(123, 230, 191, 0.08), rgba(255, 255, 255, 0.04));
-}
-
-.safe-sequence-step__header,
-.safe-sequence-step__controls {
-  display: grid;
-  gap: 0.8rem;
-}
-
-.safe-sequence-step__header {
-  grid-template-columns: minmax(0, 1fr) auto;
-  align-items: center;
-}
-
-.safe-sequence-step__header span {
-  color: var(--text-soft);
-  font-size: 0.82rem;
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
-.safe-sequence-step__controls {
-  grid-template-columns: minmax(0, 1fr) 120px;
-  align-items: end;
-}
-
-.direction-toggle {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.45rem;
-}
-
-.direction-toggle__button {
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 16px;
-  background: rgba(255, 255, 255, 0.04);
-  color: var(--text-soft);
-  padding: 0.8rem 0.9rem;
-}
-
-.direction-toggle__button--active {
-  background: linear-gradient(135deg, rgba(255, 213, 107, 0.22), rgba(126, 213, 255, 0.2));
-  color: #fff6df;
-  border-color: rgba(255, 213, 107, 0.3);
-}
-
-.safe-dial {
-  display: grid;
-  grid-template-columns: minmax(140px, 180px) minmax(0, 1fr);
-  gap: 1rem;
-  align-items: center;
-}
-
-.safe-dial__wheel {
-  position: relative;
-  display: grid;
-  place-items: center;
-  width: min(46vw, 180px);
-  aspect-ratio: 1;
-  border-radius: 50%;
-  margin: 0 auto;
-  background:
-    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.06), transparent 46%),
-    conic-gradient(
-      from 0deg,
-      rgba(255, 213, 107, 0.26),
-      rgba(126, 213, 255, 0.18),
-      rgba(255, 156, 115, 0.28),
-      rgba(255, 213, 107, 0.26)
-    );
-  border: 1px solid rgba(255, 255, 255, 0.08);
-}
-
-.safe-dial__wheel::after {
-  content: '';
-  position: absolute;
-  inset: 18px;
-  border-radius: 50%;
-  background: rgba(10, 10, 20, 0.86);
-  border: 1px solid rgba(255, 255, 255, 0.06);
-}
-
-.safe-dial__marker,
-.safe-dial__needle,
-.safe-dial__wheel strong,
-.safe-dial__wheel small {
-  position: relative;
-  z-index: 1;
-}
-
-.safe-dial__marker--top {
-  position: absolute;
-  top: 10px;
-  left: 50%;
-  width: 4px;
-  height: 18px;
-  border-radius: 999px;
-  background: var(--accent-gold);
-  transform: translateX(-50%);
-  box-shadow: 0 0 14px rgba(255, 213, 107, 0.4);
-}
-
-.safe-dial__needle {
-  position: absolute;
-  left: 50%;
-  top: 18%;
-  transform-origin: 50% 126%;
-  width: 3px;
-  height: 34%;
-  border-radius: 999px;
-  background: linear-gradient(180deg, var(--accent-coral), var(--accent-sky));
-  box-shadow: 0 0 14px rgba(126, 213, 255, 0.32);
-}
-
-.safe-dial__wheel strong {
-  font-size: 1.7rem;
-}
-
-.safe-dial__wheel small {
-  margin-top: 1.8rem;
-  color: var(--text-soft);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-}
-
 .safe-dial__stats {
   display: flex;
   flex-wrap: wrap;
@@ -678,6 +515,471 @@ button {
   margin: 0;
   font-family: 'Cinzel', Georgia, serif;
   font-size: clamp(1.3rem, 2vw, 2rem);
+}
+
+/* ── Vault / Safe dial ─────────────────────────────── */
+
+.safe-dial-section {
+  --dial-size: min(68vw, 280px);
+}
+
+.safe-sequence-track {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+}
+
+.safe-sequence-track__card {
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.safe-sequence-track__card--active {
+  border-color: rgba(126, 213, 255, 0.42);
+  box-shadow: 0 0 0 1px rgba(126, 213, 255, 0.22) inset;
+}
+
+.safe-sequence-track__card--done {
+  border-color: rgba(123, 230, 191, 0.32);
+  background: linear-gradient(180deg, rgba(123, 230, 191, 0.08), rgba(255, 255, 255, 0.04));
+}
+
+.chip--active {
+  background: rgba(126, 213, 255, 0.18);
+  color: var(--accent-sky);
+  border: 1px solid rgba(126, 213, 255, 0.25);
+}
+
+.chip--done {
+  background: rgba(123, 230, 191, 0.18);
+  color: var(--accent-mint);
+  border: 1px solid rgba(123, 230, 191, 0.25);
+}
+
+/* Realistic vault dial */
+.vault-dial {
+  display: grid;
+  gap: 1rem;
+  justify-items: center;
+}
+
+.vault-dial__body {
+  position: relative;
+  width: var(--dial-size);
+  aspect-ratio: 1;
+}
+
+/* Outer bezel - brushed steel look */
+.vault-dial__bezel {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 38% 28%, rgba(255, 255, 255, 0.12), transparent 40%),
+    radial-gradient(circle at 62% 72%, rgba(255, 255, 255, 0.06), transparent 40%),
+    conic-gradient(
+      from 0deg,
+      rgba(90, 90, 110, 0.95),
+      rgba(60, 60, 78, 0.95),
+      rgba(80, 80, 100, 0.95),
+      rgba(55, 55, 72, 0.95),
+      rgba(90, 90, 110, 0.95)
+    );
+  border: 2px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 0 0 3px rgba(0, 0, 0, 0.4),
+    0 8px 32px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.3);
+}
+
+/* Fixed index mark (triangle at top) */
+.vault-dial__index-mark {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  z-index: 4;
+  width: 0;
+  height: 0;
+  border-left: 8px solid transparent;
+  border-right: 8px solid transparent;
+  border-top: 16px solid #ff4444;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 0 6px rgba(255, 68, 68, 0.6));
+}
+
+/* Rotating face */
+.vault-dial__face {
+  position: absolute;
+  inset: 10%;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 50% 50%, rgba(35, 32, 55, 0.98), rgba(18, 16, 32, 0.98)),
+    rgba(20, 18, 36, 1);
+  border: 2px solid rgba(255, 255, 255, 0.06);
+  box-shadow:
+    inset 0 0 40px rgba(0, 0, 0, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transition: transform 100ms ease-out;
+}
+
+/* Number labels */
+.vault-dial__number {
+  position: absolute;
+  top: 6%;
+  left: 50%;
+  width: 0;
+  display: flex;
+  justify-content: center;
+  transform-origin: 50% calc(var(--dial-size) * 0.4 - var(--dial-size) * 0.1 * 0.5);
+  font-size: 0.68rem;
+  color: rgba(255, 255, 255, 0.5);
+  pointer-events: none;
+  z-index: 1;
+}
+
+.vault-dial__number--major {
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.vault-dial__number > span {
+  display: block;
+  transform-origin: center center;
+  white-space: nowrap;
+}
+
+/* Tick marks */
+.vault-dial__tick {
+  position: absolute;
+  top: 1px;
+  left: 50%;
+  width: 1px;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.18);
+  transform-origin: 50% calc(var(--dial-size) * 0.4);
+}
+
+.vault-dial__tick--mid {
+  height: 8px;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.vault-dial__tick--major {
+  width: 2px;
+  height: 11px;
+  background: rgba(255, 213, 107, 0.55);
+}
+
+/* Centre hub - machined knob look */
+.vault-dial__hub {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 28%;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 40% 35%, rgba(255, 255, 255, 0.15), transparent 50%),
+    conic-gradient(
+      from 0deg,
+      rgba(70, 68, 90, 0.9),
+      rgba(50, 48, 68, 0.9),
+      rgba(65, 63, 85, 0.9),
+      rgba(45, 43, 62, 0.9),
+      rgba(70, 68, 90, 0.9)
+    );
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  box-shadow:
+    0 2px 10px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  z-index: 2;
+}
+
+.vault-dial__hub-inner {
+  position: absolute;
+  inset: 22%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 45% 40%, rgba(80, 78, 100, 0.8), rgba(30, 28, 50, 0.9));
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+/* Centre readout overlays the hub */
+.vault-dial__readout {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  place-content: center;
+  gap: 0.1rem;
+  z-index: 3;
+  text-align: center;
+  pointer-events: none;
+}
+
+.vault-dial__readout strong {
+  font-size: clamp(1.4rem, 4vw, 2rem);
+  line-height: 1;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
+.vault-dial__readout small {
+  font-size: 0.72rem;
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+}
+
+.vault-dial__direction--wrong {
+  color: #ff6b6b;
+}
+
+/* Instruction bar below dial */
+.vault-dial__instruction {
+  display: flex;
+  gap: 0.8rem;
+  align-items: center;
+  padding: 0.8rem 1.1rem;
+  border-radius: 18px;
+  background: rgba(126, 213, 255, 0.08);
+  border: 1px solid rgba(126, 213, 255, 0.15);
+  width: 100%;
+  max-width: var(--dial-size);
+}
+
+.vault-dial__instruction--done {
+  background: rgba(123, 230, 191, 0.1);
+  border-color: rgba(123, 230, 191, 0.22);
+}
+
+.vault-dial__arrow {
+  font-size: 1.6rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.vault-dial__instruction strong {
+  display: block;
+  font-size: 0.95rem;
+}
+
+.vault-dial__remaining {
+  font-size: 0.8rem;
+  color: var(--text-soft);
+}
+
+/* Step progress pills */
+.vault-steps {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.vault-steps > .vault-step {
+  display: grid;
+  grid-template-columns: 1.6rem 1fr auto;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.55rem 0.8rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition:
+    border-color 200ms ease,
+    background 200ms ease,
+    box-shadow 200ms ease;
+}
+
+.vault-step__icon {
+  font-size: 1.1rem;
+  text-align: center;
+}
+
+.vault-step__label {
+  font-weight: 600;
+}
+
+.vault-step__dir {
+  font-size: 0.78rem;
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.vault-step--active {
+  border-color: rgba(126, 213, 255, 0.4);
+  background: rgba(126, 213, 255, 0.06);
+  box-shadow: 0 0 0 1px rgba(126, 213, 255, 0.15) inset;
+}
+
+.vault-step--done {
+  border-color: rgba(123, 230, 191, 0.3);
+  background: rgba(123, 230, 191, 0.06);
+}
+
+.vault-step--done .vault-step__icon {
+  color: var(--accent-mint);
+}
+
+.vault-steps__progress {
+  height: 4px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.vault-steps__bar {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-gold), var(--accent-mint));
+  transition: width 200ms ease;
+}
+
+/* Action buttons */
+.vault-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.vault-actions__main {
+  flex: 1;
+  min-width: 140px;
+}
+
+.vault-guidance {
+  font-size: 0.88rem;
+}
+
+/* Collapsible editor */
+.vault-editor {
+  border-radius: 18px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  overflow: hidden;
+}
+
+.vault-editor__toggle {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.8rem 1rem;
+  cursor: pointer;
+  color: var(--text-soft);
+  font-weight: 600;
+  list-style: none;
+}
+
+.vault-editor__toggle::-webkit-details-marker {
+  display: none;
+}
+
+.vault-editor__toggle::before {
+  content: '+ ';
+  font-weight: 400;
+  margin-right: 0.3rem;
+}
+
+.vault-editor[open] .vault-editor__toggle::before {
+  content: '- ';
+}
+
+.vault-editor__body {
+  display: grid;
+  gap: 0.9rem;
+  padding: 0 1rem 1rem;
+}
+
+/* Presets row */
+.vault-presets {
+  display: grid;
+  gap: 0.45rem;
+}
+
+.vault-presets__row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.vault-preset-btn {
+  padding: 0.55rem 0.85rem;
+  font-size: 0.85rem;
+}
+
+/* Inline combo editor */
+.vault-combo {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.vault-combo__step {
+  display: grid;
+  grid-template-columns: 1.4rem auto 70px auto auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.vault-combo__num {
+  font-size: 0.8rem;
+  color: var(--text-soft);
+  text-align: center;
+  font-weight: 700;
+}
+
+.vault-combo__dir {
+  display: flex;
+  gap: 2px;
+}
+
+.vault-combo__dir-btn {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--text-soft);
+  padding: 0.45rem 0.65rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.vault-combo__dir-btn--on {
+  background: linear-gradient(135deg, rgba(255, 213, 107, 0.2), rgba(126, 213, 255, 0.18));
+  color: #fff6df;
+  border-color: rgba(255, 213, 107, 0.28);
+}
+
+.vault-combo__deg {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(8, 8, 18, 0.6);
+  color: inherit;
+  border-radius: 12px;
+  padding: 0.5rem 0.6rem;
+  text-align: center;
+  font: inherit;
+  font-size: 0.92rem;
+}
+
+.vault-combo__unit {
+  color: var(--text-soft);
+  font-size: 0.88rem;
+}
+
+.vault-combo__remove {
+  border: 0;
+  background: transparent;
+  color: rgba(255, 120, 100, 0.85);
+  font-size: 1.2rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: 8px;
+  line-height: 1;
+}
+
+.vault-combo__remove:disabled {
+  opacity: 0.25;
 }
 
 .water-bucket {
@@ -779,7 +1081,8 @@ button {
   font-size: clamp(1.3rem, 2vw, 2rem);
 }
 
-.water-bucket__stats {
+.water-bucket__stats,
+.compass-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.8rem;
@@ -883,6 +1186,140 @@ button {
   padding: 0;
 }
 
+/* ── Height calculator / Clinometer ────────────────── */
+
+.clino {
+  display: grid;
+  grid-template-columns: minmax(160px, 220px) minmax(0, 1fr);
+  gap: 1.2rem;
+  align-items: center;
+}
+
+.clino__gauge {
+  position: relative;
+  width: min(56vw, 220px);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  overflow: hidden;
+  border: 2px solid rgba(255, 255, 255, 0.08);
+  box-shadow:
+    0 8px 28px rgba(0, 0, 0, 0.35),
+    inset 0 0 30px rgba(0, 0, 0, 0.3);
+}
+
+.clino__sky {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: linear-gradient(180deg, rgba(40, 60, 100, 0.4), rgba(20, 30, 55, 0.25));
+}
+
+.clino__ground {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 50%;
+  background: linear-gradient(180deg, rgba(50, 40, 30, 0.2), rgba(35, 28, 20, 0.35));
+}
+
+.clino__arc {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.clino__readout {
+  position: absolute;
+  bottom: 12%;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  pointer-events: none;
+}
+
+.clino__readout strong {
+  font-size: 1.15rem;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
+.clino__result {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.clino__height {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+}
+
+.clino__height strong {
+  font-size: clamp(2rem, 5vw, 3rem);
+  line-height: 1;
+  font-family: 'Cinzel', Georgia, serif;
+}
+
+.clino__height span {
+  font-size: 1.1rem;
+  color: var(--text-soft);
+}
+
+.clino__formula {
+  padding: 0.5rem 0.7rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.clino__formula small {
+  color: var(--text-soft);
+  font-size: 0.8rem;
+}
+
+.clino__inputs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.85rem;
+}
+
+.clino__input-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.clino__input-row input {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(8, 8, 18, 0.6);
+  color: inherit;
+  border-radius: 14px;
+  padding: 0.7rem 0.8rem;
+  font: inherit;
+}
+
+.clino__unit-select {
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(8, 8, 18, 0.6);
+  color: inherit;
+  border-radius: 14px;
+  padding: 0.7rem 0.6rem;
+  font: inherit;
+  font-size: 0.88rem;
+  cursor: pointer;
+}
+
+.clino__unit-label {
+  color: var(--text-soft);
+  font-size: 0.9rem;
+  padding: 0 0.3rem;
+}
+
 @keyframes pulse-ring {
   0%,
   100% {
@@ -928,21 +1365,32 @@ button {
     flex-direction: column;
   }
 
-  .safe-dial {
-    grid-template-columns: 1fr;
+  .safe-dial-section {
+    --dial-size: min(72vw, 240px);
+  }
+
+  .vault-combo__step {
+    grid-template-columns: 1.4rem auto 60px auto auto;
   }
 
   .water-bucket {
     grid-template-columns: 1fr;
   }
 
-  .water-bucket__stats {
+  .water-bucket__stats,
+  .compass-stats {
     grid-template-columns: 1fr;
   }
 
-  .safe-sequence-step__controls {
+  .clino {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .clino__inputs {
     grid-template-columns: 1fr;
   }
+
 
   .template-item {
     grid-template-columns: 1fr;

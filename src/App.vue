@@ -1,5 +1,6 @@
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import CompassRose from './components/CompassRose.vue'
 import TracePanel from './components/TracePanel.vue'
 import VectorBars from './components/VectorBars.vue'
 import { useMotionSensors } from './composables/useMotionSensors'
@@ -62,6 +63,10 @@ const waterBucketBestTimeMs = ref(0)
 const waterBucketLastDurationMs = ref(0)
 const waterBucketSpillEvents = ref(0)
 const waterBucketWasSpilling = ref(false)
+const heightCalcDistance = ref(10)
+const heightCalcUnit = ref('m')
+const heightCalcAngleLocked = ref(null)
+const heightCalcEyeHeight = ref(1.6)
 
 const SAFE_DIAL_GUIDE_DEGREES = 10
 const WATER_BUCKET_GOAL_MS = 15000
@@ -323,6 +328,25 @@ const waterBucketGuidanceCopy = computed(() => {
   }
 
   return 'Calibrate while the phone is flat, then hold it steady for 15 seconds without spilling the water.'
+})
+
+const heightCalcLivePitch = computed(() => {
+  const beta = currentSample.value.orientation.beta
+  if (typeof beta !== 'number') return null
+  return beta
+})
+const heightCalcAngle = computed(() =>
+  heightCalcAngleLocked.value != null ? heightCalcAngleLocked.value : heightCalcLivePitch.value
+)
+const heightCalcResult = computed(() => {
+  if (heightCalcAngle.value == null) return null
+  const rad = (heightCalcAngle.value * Math.PI) / 180
+  const objectHeight = Math.tan(rad) * heightCalcDistance.value + heightCalcEyeHeight.value
+  return objectHeight
+})
+const heightCalcUnitLabel = computed(() => {
+  const labels = { m: 'metres', ft: 'feet', yd: 'yards' }
+  return labels[heightCalcUnit.value] || heightCalcUnit.value
 })
 
 const liveAcceleration = computed(() => [
@@ -868,6 +892,15 @@ function calibrateSafeDial() {
     : 'Safe dial zero reset.'
 }
 
+function lockHeightAngle() {
+  heightCalcAngleLocked.value = heightCalcLivePitch.value
+  triggerHaptic(20)
+}
+
+function unlockHeightAngle() {
+  heightCalcAngleLocked.value = null
+}
+
 function persistSpellbook() {
   return saveSpellbook(spellbook.value)
 }
@@ -1337,182 +1370,143 @@ onBeforeUnmount(() => {
           </p>
         </section>
 
-        <section class="panel stack">
+        <section class="panel stack safe-dial-section">
           <div class="section-head">
             <div>
               <p class="eyebrow">Lock trainer</p>
-              <h2>Safe dial sequence</h2>
+              <h2>Combination safe</h2>
             </div>
-            <span class="chip">{{ safeDialFeedbackLabel }}</span>
-          </div>
-
-          <div class="safe-dial-presets">
-            <button
-              class="button button--ghost"
-              :disabled="safeDialEnabled"
-              @click="loadSafeDialPreset('quick')"
-            >
-              90R / 50L
-            </button>
-            <button
-              class="button button--ghost"
-              :disabled="safeDialEnabled"
-              @click="loadSafeDialPreset('vault')"
-            >
-              120R / 80L / 40R
-            </button>
-            <button
-              class="button button--ghost"
-              :disabled="safeDialEnabled"
-              @click="loadSafeDialPreset('reverse')"
-            >
-              60L / 110R / 30L
-            </button>
-          </div>
-
-          <div class="safe-sequence-editor">
-            <article
-              v-for="(step, index) in safeDialSequence"
-              :key="step.id"
-              class="safe-sequence-step"
+            <span
+              class="chip"
               :class="{
-                'safe-sequence-step--active':
-                  safeDialEnabled && index === safeDialStepIndex && !safeDialSequenceComplete,
-                'safe-sequence-step--done': index <= safeDialLastCompletedStep
+                'chip--active': safeDialEnabled && !safeDialSequenceComplete,
+                'chip--done': safeDialSequenceComplete
               }"
             >
-              <div class="safe-sequence-step__header">
-                <span>Step {{ index + 1 }}</span>
-                <button
-                  class="template-item__delete"
-                  :disabled="safeDialSequence.length === 1 || safeDialEnabled"
-                  @click="removeSafeDialStep(step.id)"
-                >
-                  Remove
-                </button>
-              </div>
-              <div class="safe-sequence-step__controls">
-                <div class="direction-toggle">
-                  <button
-                    class="direction-toggle__button"
-                    :class="{ 'direction-toggle__button--active': step.direction === 'cw' }"
-                    :disabled="safeDialEnabled"
-                    @click="step.direction = 'cw'"
-                  >
-                    Right / CW
-                  </button>
-                  <button
-                    class="direction-toggle__button"
-                    :class="{ 'direction-toggle__button--active': step.direction === 'ccw' }"
-                    :disabled="safeDialEnabled"
-                    @click="step.direction = 'ccw'"
-                  >
-                    Left / CCW
-                  </button>
-                </div>
-                <label class="field field--compact">
-                  <span>Degrees</span>
-                  <input
-                    v-model.number="step.degrees"
-                    type="number"
-                    min="5"
-                    max="360"
-                    step="1"
-                    :disabled="safeDialEnabled"
-                  />
-                </label>
-              </div>
-            </article>
+              {{
+                safeDialSequenceComplete
+                  ? 'Unlocked'
+                  : safeDialEnabled
+                    ? 'Live'
+                    : 'Ready'
+              }}
+            </span>
           </div>
 
-          <div class="button-row">
-            <button
-              class="button button--secondary"
-              :disabled="safeDialEnabled"
-              @click="addSafeDialStep('cw')"
-            >
-              Add Right Step
-            </button>
-            <button
-              class="button button--ghost"
-              :disabled="safeDialEnabled"
-              @click="addSafeDialStep('ccw')"
-            >
-              Add Left Step
-            </button>
-          </div>
+          <!-- Realistic safe dial -->
+          <div class="vault-dial">
+            <div class="vault-dial__body">
+              <!-- Outer bezel ring -->
+              <div class="vault-dial__bezel">
+                <!-- Fixed triangular marker at top -->
+                <span class="vault-dial__index-mark"></span>
+              </div>
 
-          <div class="safe-dial">
-            <div class="safe-dial__wheel">
-              <span class="safe-dial__marker safe-dial__marker--top"></span>
-              <span
-                class="safe-dial__needle"
+              <!-- Rotating dial face -->
+              <div
+                class="vault-dial__face"
                 :style="{
-                  transform: `translateX(-50%) rotate(${safeDialRelativeAngle ?? 0}deg)`
+                  transform: `rotate(${safeDialRelativeAngle ?? 0}deg)`
                 }"
-              ></span>
-              <strong>
-                {{
-                  safeDialRelativeAngle == null
-                    ? 'n/a'
-                    : `${safeDialRelativeAngle.toFixed(0)}°`
-                }}
-              </strong>
-              <small>{{ safeDialEnabled ? 'active' : 'off' }}</small>
-            </div>
-
-            <div class="safe-dial__target">
-              <p class="eyebrow">Current target</p>
-              <h3>{{ safeDialCurrentInstruction }}</h3>
-              <div class="safe-dial__stats">
-                <span>Turn {{ safeDialTurnDisplay }}</span>
-                <span>
-                  {{
-                    safeDialCurrentStep
-                      ? `${safeDialStepRemaining.toFixed(0)}° remaining`
-                      : 'Done'
-                  }}
+              >
+                <!-- Number markings around the edge (every 10 degrees, 0-35) -->
+                <span
+                  v-for="n in 36"
+                  :key="`num-${n}`"
+                  class="vault-dial__number"
+                  :class="{ 'vault-dial__number--major': (n - 1) % 3 === 0 }"
+                  :style="{ transform: `rotate(${(n - 1) * 10}deg)` }"
+                >
+                  <span :style="{ transform: `rotate(${-(n - 1) * 10 - (safeDialRelativeAngle ?? 0)}deg)` }">
+                    {{ (n - 1) * 10 }}
+                  </span>
                 </span>
-                <span>{{ safeDialDirectionLabel }}</span>
-                <span>{{ safeDialSequenceProgressPercent }}% sequence</span>
-              </div>
-              <div class="guide-progress">
-                <div class="guide-progress__track">
-                  <span
-                    class="guide-progress__fill"
-                    :style="{ width: `${safeDialSequenceProgressPercent}%` }"
-                  ></span>
+
+                <!-- Tick marks (every 2 degrees) -->
+                <span
+                  v-for="t in 180"
+                  :key="`tick-${t}`"
+                  class="vault-dial__tick"
+                  :class="{
+                    'vault-dial__tick--major': (t - 1) * 2 % 10 === 0,
+                    'vault-dial__tick--mid': (t - 1) * 2 % 10 === 5
+                  }"
+                  :style="{ transform: `rotate(${(t - 1) * 2}deg)` }"
+                ></span>
+
+                <!-- Centre hub -->
+                <div class="vault-dial__hub">
+                  <div class="vault-dial__hub-inner"></div>
                 </div>
               </div>
-              <p class="comparison-copy">
-                {{ safeDialGuidanceCopy }}
-              </p>
+
+              <!-- Status overlay in centre -->
+              <div class="vault-dial__readout">
+                <strong>
+                  {{
+                    safeDialRelativeAngle == null
+                      ? '--'
+                      : `${Math.round(safeDialRelativeAngle) % 360}°`
+                  }}
+                </strong>
+                <small :class="{ 'vault-dial__direction--wrong': safeDialWrongDirection }">
+                  {{ safeDialEnabled ? safeDialDirectionLabel : 'Idle' }}
+                </small>
+              </div>
+            </div>
+
+            <!-- Current instruction below dial -->
+            <div class="vault-dial__instruction" v-if="safeDialEnabled && !safeDialSequenceComplete">
+              <span class="vault-dial__arrow">
+                {{ safeDialCurrentStep?.direction === 'cw' ? '&#x21BB;' : '&#x21BA;' }}
+              </span>
+              <div>
+                <strong>{{ safeDialCurrentInstruction }}</strong>
+                <span class="vault-dial__remaining">
+                  {{ safeDialStepRemaining.toFixed(0) }}° to go
+                </span>
+              </div>
+            </div>
+            <div class="vault-dial__instruction vault-dial__instruction--done" v-else-if="safeDialSequenceComplete">
+              <span class="vault-dial__arrow">&#x2714;</span>
+              <div>
+                <strong>Safe opened</strong>
+                <span class="vault-dial__remaining">All steps completed</span>
+              </div>
             </div>
           </div>
 
-          <div class="safe-sequence-track">
-            <article
+          <!-- Step progress track (always visible) -->
+          <div class="vault-steps">
+            <div
               v-for="(step, index) in safeDialSequence"
-              :key="`${step.id}-track`"
-              class="safe-sequence-track__card"
+              :key="`${step.id}-pill`"
+              class="vault-step"
               :class="{
-                'safe-sequence-track__card--active':
+                'vault-step--active':
                   safeDialEnabled && index === safeDialStepIndex && !safeDialSequenceComplete,
-                'safe-sequence-track__card--done': index <= safeDialLastCompletedStep
+                'vault-step--done': index <= safeDialLastCompletedStep
               }"
             >
-              <strong>{{ getSafeDialDirectionSymbol(step.direction) }}</strong>
-              <span>{{ formatSafeDialDirection(step.direction) }}</span>
-              <small>{{ getSafeDialStepDegrees(step) }}°</small>
-            </article>
+              <span class="vault-step__icon">{{ getSafeDialDirectionSymbol(step.direction) }}</span>
+              <span class="vault-step__label">{{ getSafeDialStepDegrees(step) }}°</span>
+              <span class="vault-step__dir">{{ step.direction === 'cw' ? 'R' : 'L' }}</span>
+            </div>
+            <div class="vault-steps__progress">
+              <div
+                class="vault-steps__bar"
+                :style="{ width: `${safeDialSequenceProgressPercent}%` }"
+              ></div>
+            </div>
           </div>
 
-          <div class="button-row">
-            <button class="button button--secondary" @click="startSafeDialSequence">
+          <!-- Action buttons - primary actions front and centre -->
+          <div class="vault-actions">
+            <button class="button button--primary vault-actions__main" @click="startSafeDialSequence">
               {{
                 safeDialEnabled
-                  ? (safeDialSequenceComplete ? 'Run Again' : 'Restart Sequence')
-                  : 'Start Sequence'
+                  ? (safeDialSequenceComplete ? 'Try Again' : 'Restart')
+                  : 'Arm Safe'
               }}
             </button>
             <button
@@ -1527,13 +1521,119 @@ onBeforeUnmount(() => {
               :disabled="!isListening && safeDialAbsoluteAngle == null"
               @click="calibrateSafeDial"
             >
-              Set Current Zero
+              Zero
             </button>
           </div>
 
-          <p class="comparison-copy">
-            Build a real sequence like a lock combination. The dial gives light guide cues
-            every {{ SAFE_DIAL_GUIDE_DEGREES }}° and a strong confirmation exactly when a step locks.
+          <!-- Guidance text -->
+          <p class="comparison-copy vault-guidance">
+            {{ safeDialGuidanceCopy }}
+          </p>
+
+          <!-- Collapsible combo editor -->
+          <details class="vault-editor" :open="!safeDialEnabled ? true : undefined">
+            <summary class="vault-editor__toggle">
+              Edit combination
+              <span class="chip">{{ safeDialSequence.length }} steps</span>
+            </summary>
+
+            <div class="vault-editor__body">
+              <!-- Presets -->
+              <div class="vault-presets">
+                <p class="label">Presets</p>
+                <div class="vault-presets__row">
+                  <button
+                    class="button button--ghost vault-preset-btn"
+                    :disabled="safeDialEnabled"
+                    @click="loadSafeDialPreset('quick')"
+                  >
+                    90R &middot; 50L
+                  </button>
+                  <button
+                    class="button button--ghost vault-preset-btn"
+                    :disabled="safeDialEnabled"
+                    @click="loadSafeDialPreset('vault')"
+                  >
+                    120R &middot; 80L &middot; 40R
+                  </button>
+                  <button
+                    class="button button--ghost vault-preset-btn"
+                    :disabled="safeDialEnabled"
+                    @click="loadSafeDialPreset('reverse')"
+                  >
+                    60L &middot; 110R &middot; 30L
+                  </button>
+                </div>
+              </div>
+
+              <!-- Step list -->
+              <div class="vault-combo">
+                <article
+                  v-for="(step, index) in safeDialSequence"
+                  :key="step.id"
+                  class="vault-combo__step"
+                >
+                  <span class="vault-combo__num">{{ index + 1 }}</span>
+                  <div class="vault-combo__dir">
+                    <button
+                      class="vault-combo__dir-btn"
+                      :class="{ 'vault-combo__dir-btn--on': step.direction === 'cw' }"
+                      :disabled="safeDialEnabled"
+                      @click="step.direction = 'cw'"
+                    >
+                      R
+                    </button>
+                    <button
+                      class="vault-combo__dir-btn"
+                      :class="{ 'vault-combo__dir-btn--on': step.direction === 'ccw' }"
+                      :disabled="safeDialEnabled"
+                      @click="step.direction = 'ccw'"
+                    >
+                      L
+                    </button>
+                  </div>
+                  <input
+                    class="vault-combo__deg"
+                    v-model.number="step.degrees"
+                    type="number"
+                    min="5"
+                    max="360"
+                    step="5"
+                    :disabled="safeDialEnabled"
+                  />
+                  <span class="vault-combo__unit">°</span>
+                  <button
+                    class="vault-combo__remove"
+                    :disabled="safeDialSequence.length === 1 || safeDialEnabled"
+                    @click="removeSafeDialStep(step.id)"
+                  >
+                    &times;
+                  </button>
+                </article>
+              </div>
+
+              <div class="button-row">
+                <button
+                  class="button button--ghost"
+                  :disabled="safeDialEnabled"
+                  @click="addSafeDialStep('cw')"
+                >
+                  + Right step
+                </button>
+                <button
+                  class="button button--ghost"
+                  :disabled="safeDialEnabled"
+                  @click="addSafeDialStep('ccw')"
+                >
+                  + Left step
+                </button>
+              </div>
+            </div>
+          </details>
+
+          <p class="comparison-copy" style="font-size: 0.82rem;">
+            Rotate your phone like a real safe dial. {{ safeDialFeedbackLabel }} feedback
+            fires every {{ SAFE_DIAL_GUIDE_DEGREES }}° and a strong pulse at each lock point.
           </p>
         </section>
 
@@ -1650,6 +1750,241 @@ onBeforeUnmount(() => {
           <p class="comparison-copy">
             The bucket leaks when tilt or sudden wrist motion gets too high. Start with the
             phone flat in your palm and see if you can keep water in the bucket for 15 seconds.
+          </p>
+        </section>
+
+        <section class="panel stack">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Navigation</p>
+              <h2>Compass</h2>
+            </div>
+            <span class="chip">
+              {{
+                safeDialAbsoluteAngle == null
+                  ? 'No heading'
+                  : `${Math.round(safeDialAbsoluteAngle)}°`
+              }}
+            </span>
+          </div>
+
+          <CompassRose :heading="safeDialAbsoluteAngle" />
+
+          <div class="compass-stats">
+            <article class="safe-sequence-track__card">
+              <strong>
+                {{
+                  safeDialAbsoluteAngle == null
+                    ? 'n/a'
+                    : `${Math.round(safeDialAbsoluteAngle)}°`
+                }}
+              </strong>
+              <span>Heading</span>
+              <small>compass bearing</small>
+            </article>
+            <article class="safe-sequence-track__card">
+              <strong>
+                {{
+                  currentSample.orientation.beta == null
+                    ? 'n/a'
+                    : `${currentSample.orientation.beta.toFixed(1)}°`
+                }}
+              </strong>
+              <span>Pitch</span>
+              <small>forward / back</small>
+            </article>
+            <article class="safe-sequence-track__card">
+              <strong>
+                {{
+                  currentSample.orientation.gamma == null
+                    ? 'n/a'
+                    : `${currentSample.orientation.gamma.toFixed(1)}°`
+                }}
+              </strong>
+              <span>Roll</span>
+              <small>left / right</small>
+            </article>
+          </div>
+
+          <p class="comparison-copy">
+            Point the phone in different directions to see the compass update in real time.
+            Heading accuracy depends on the device magnetometer and calibration.
+          </p>
+        </section>
+
+        <section class="panel stack height-calc-section">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Clinometer</p>
+              <h2>Height calculator</h2>
+            </div>
+            <span
+              class="chip"
+              :class="{ 'chip--active': heightCalcAngleLocked != null }"
+            >
+              {{ heightCalcAngleLocked != null ? 'Locked' : 'Live' }}
+            </span>
+          </div>
+
+          <!-- Visual clinometer -->
+          <div class="clino">
+            <div class="clino__gauge">
+              <!-- Sky/ground split -->
+              <div class="clino__sky"></div>
+              <div class="clino__ground"></div>
+
+              <!-- Angle arc -->
+              <svg class="clino__arc" viewBox="0 0 200 200">
+                <!-- Reference lines -->
+                <line x1="10" y1="100" x2="190" y2="100" stroke="rgba(255,255,255,0.12)" stroke-width="1" />
+                <line x1="100" y1="10" x2="100" y2="190" stroke="rgba(255,255,255,0.06)" stroke-width="1" stroke-dasharray="3 3" />
+
+                <!-- Degree marks -->
+                <line
+                  v-for="deg in [10, 20, 30, 40, 50, 60, 70, 80]"
+                  :key="`mark-${deg}`"
+                  :x1="100 + Math.cos((-deg * Math.PI) / 180) * 72"
+                  :y1="100 - Math.sin((-deg * Math.PI) / 180) * 72"
+                  :x2="100 + Math.cos((-deg * Math.PI) / 180) * 82"
+                  :y2="100 - Math.sin((-deg * Math.PI) / 180) * 82"
+                  stroke="rgba(255,255,255,0.2)"
+                  stroke-width="1"
+                />
+                <line
+                  v-for="deg in [-10, -20, -30]"
+                  :key="`mark-neg-${deg}`"
+                  :x1="100 + Math.cos((-deg * Math.PI) / 180) * 72"
+                  :y1="100 - Math.sin((-deg * Math.PI) / 180) * 72"
+                  :x2="100 + Math.cos((-deg * Math.PI) / 180) * 82"
+                  :y2="100 - Math.sin((-deg * Math.PI) / 180) * 82"
+                  stroke="rgba(255,255,255,0.12)"
+                  stroke-width="1"
+                />
+
+                <!-- Angle labels -->
+                <text
+                  v-for="deg in [0, 15, 30, 45, 60, 75, 90]"
+                  :key="`label-${deg}`"
+                  :x="100 + Math.cos((-deg * Math.PI) / 180) * 88"
+                  :y="100 - Math.sin((-deg * Math.PI) / 180) * 88"
+                  fill="rgba(255,255,255,0.35)"
+                  font-size="7"
+                  text-anchor="middle"
+                  dominant-baseline="central"
+                >{{ deg }}°</text>
+
+                <!-- Filled angle wedge -->
+                <path
+                  v-if="heightCalcAngle != null && heightCalcAngle !== 0"
+                  :d="`M 100 100 L ${100 + 68} 100 A 68 68 0 ${Math.abs(heightCalcAngle) > 180 ? 1 : 0} ${heightCalcAngle < 0 ? 1 : 0} ${100 + Math.cos((-heightCalcAngle * Math.PI) / 180) * 68} ${100 - Math.sin((-heightCalcAngle * Math.PI) / 180) * 68} Z`"
+                  :fill="heightCalcAngle >= 0 ? 'rgba(255, 213, 107, 0.12)' : 'rgba(126, 213, 255, 0.12)'"
+                  :stroke="heightCalcAngle >= 0 ? 'rgba(255, 213, 107, 0.3)' : 'rgba(126, 213, 255, 0.3)'"
+                  stroke-width="0.5"
+                />
+
+                <!-- Needle -->
+                <line
+                  x1="100"
+                  y1="100"
+                  :x2="100 + Math.cos((-(heightCalcAngle ?? 0) * Math.PI) / 180) * 72"
+                  :y2="100 - Math.sin((-(heightCalcAngle ?? 0) * Math.PI) / 180) * 72"
+                  :stroke="heightCalcAngleLocked != null ? '#ffd56b' : '#ff9c73'"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                />
+
+                <!-- Centre dot -->
+                <circle cx="100" cy="100" r="4" fill="rgba(255,255,255,0.9)" />
+              </svg>
+
+              <!-- Angle readout -->
+              <div class="clino__readout">
+                <strong>
+                  {{ heightCalcAngle == null ? '--' : `${heightCalcAngle.toFixed(1)}°` }}
+                </strong>
+              </div>
+            </div>
+
+            <!-- Result panel next to gauge -->
+            <div class="clino__result">
+              <p class="eyebrow">Estimated height</p>
+              <div class="clino__height">
+                <strong>
+                  {{
+                    heightCalcResult == null
+                      ? '--'
+                      : heightCalcResult.toFixed(1)
+                  }}
+                </strong>
+                <span>{{ heightCalcUnit }}</span>
+              </div>
+              <div class="clino__formula">
+                <small>
+                  tan({{ heightCalcAngle == null ? '--' : `${heightCalcAngle.toFixed(1)}°` }})
+                  &times; {{ heightCalcDistance }}{{ heightCalcUnit }}
+                  + {{ heightCalcEyeHeight }}{{ heightCalcUnit }}
+                </small>
+              </div>
+            </div>
+          </div>
+
+          <!-- Lock / unlock angle -->
+          <div class="button-row">
+            <button
+              class="button button--primary"
+              :disabled="heightCalcLivePitch == null"
+              @click="lockHeightAngle"
+              v-if="heightCalcAngleLocked == null"
+            >
+              Lock Angle
+            </button>
+            <button
+              class="button button--secondary"
+              @click="unlockHeightAngle"
+              v-else
+            >
+              Unlock Angle
+            </button>
+          </div>
+
+          <!-- Inputs -->
+          <div class="clino__inputs">
+            <label class="field">
+              <span>Distance to object</span>
+              <div class="clino__input-row">
+                <input
+                  v-model.number="heightCalcDistance"
+                  type="number"
+                  min="0.1"
+                  step="0.5"
+                  inputmode="decimal"
+                />
+                <select v-model="heightCalcUnit" class="clino__unit-select">
+                  <option value="m">m</option>
+                  <option value="ft">ft</option>
+                  <option value="yd">yd</option>
+                </select>
+              </div>
+            </label>
+            <label class="field">
+              <span>Eye height</span>
+              <div class="clino__input-row">
+                <input
+                  v-model.number="heightCalcEyeHeight"
+                  type="number"
+                  min="0"
+                  step="0.1"
+                  inputmode="decimal"
+                />
+                <span class="clino__unit-label">{{ heightCalcUnit }}</span>
+              </div>
+            </label>
+          </div>
+
+          <p class="comparison-copy">
+            Stand at a known distance from a tree, building, or pole. Hold the phone at eye
+            level, tilt it until the top edge lines up with the top of the object, then lock the angle.
+            Height = tan(angle) &times; distance + your eye height.
           </p>
         </section>
 
