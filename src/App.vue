@@ -63,6 +63,9 @@ const waterBucketBestTimeMs = ref(0)
 const waterBucketLastDurationMs = ref(0)
 const waterBucketSpillEvents = ref(0)
 const waterBucketWasSpilling = ref(false)
+const waterBucketDroplets = ref([])
+const waterBucketMomentum = ref(0)
+let waterBucketDropletId = 0
 const heightCalcDistance = ref(10)
 const heightCalcUnit = ref('m')
 const heightCalcAngleLocked = ref(null)
@@ -74,6 +77,7 @@ const WATER_BUCKET_SAFE_TILT = 8
 const WATER_BUCKET_WARN_TILT = 14
 const WATER_BUCKET_SPILL_TILT = 22
 const WATER_BUCKET_SAFE_ROTATION = 22
+const WATER_BUCKET_DRIP_LIMIT = 6
 
 const accelTraceFields = [
   { label: 'ax', path: 'acceleration.x', color: '#ff9c73', scale: 12 },
@@ -302,6 +306,22 @@ const waterBucketRiskLabel = computed(() => {
 
   return 'Steady'
 })
+const waterBucketRiskColor = computed(() => {
+  const label = waterBucketRiskLabel.value
+  if (label === 'Major spill' || label === 'Spilled') return '#ff5555'
+  if (label === 'Sloshing') return '#ffaa44'
+  if (label === 'Steady') return '#7be6bf'
+  return 'rgba(255,255,255,0.4)'
+})
+const waterBucketSurfaceAngle = computed(() =>
+  clamp(-(waterBucketRollOffset.value ?? 0) * 1.2, -28, 28)
+)
+const waterBucketSurfaceShift = computed(() =>
+  clamp((waterBucketRollOffset.value ?? 0) * 0.6, -20, 20)
+)
+const waterBucketPitchVisual = computed(() =>
+  clamp((waterBucketPitchOffset.value ?? 0) * 0.5, -12, 12)
+)
 const waterBucketGuidanceCopy = computed(() => {
   if (waterBucketEnabled.value) {
     if (waterBucketWaterLevel.value <= 0) {
@@ -662,6 +682,8 @@ function resetWaterBucketRun() {
   waterBucketLastDurationMs.value = 0
   waterBucketSpillEvents.value = 0
   waterBucketWasSpilling.value = false
+  waterBucketMomentum.value = 0
+  waterBucketDroplets.value = []
 }
 
 function calibrateWaterBucket() {
@@ -716,6 +738,23 @@ async function startWaterBucketGame() {
   ).toFixed(0)} seconds.`
 }
 
+function spawnDroplets(count, side) {
+  const now = Date.now()
+  for (let i = 0; i < count; i++) {
+    waterBucketDroplets.value = [
+      ...waterBucketDroplets.value.filter((d) => now - d.born < 1200),
+      {
+        id: ++waterBucketDropletId,
+        born: now,
+        x: side === 'left' ? 8 + Math.random() * 15 : 77 + Math.random() * 15,
+        size: 3 + Math.random() * 5,
+        dx: side === 'left' ? -(1 + Math.random() * 3) : 1 + Math.random() * 3,
+        dy: -(2 + Math.random() * 4)
+      }
+    ].slice(-WATER_BUCKET_DRIP_LIMIT)
+  }
+}
+
 function processWaterBucketSample(sample) {
   if (!waterBucketEnabled.value) {
     return
@@ -733,54 +772,98 @@ function processWaterBucketSample(sample) {
   }
 
   const deltaMs = clamp(timestamp - waterBucketLastTimestamp.value, 0, 160)
+  const deltaSec = deltaMs / 1000
   waterBucketLastTimestamp.value = timestamp
   waterBucketLastDurationMs.value = Math.max(0, timestamp - waterBucketStartTimestamp.value)
 
+  // ── Tilt magnitude ──
+  // Combined tilt = sqrt(pitchOffset² + rollOffset²)
+  // This gives the total angular displacement from the calibrated flat position.
   const beta = sample.orientation.beta
   const gamma = sample.orientation.gamma
-  const tilt =
-    typeof beta === 'number' && typeof gamma === 'number'
-      ? Math.hypot(
-          beta - waterBucketBaseline.value.beta,
-          gamma - waterBucketBaseline.value.gamma
-        )
-      : null
-  const rotation = Math.hypot(sample.rotationRate.beta ?? 0, sample.rotationRate.gamma ?? 0)
+  const pitchOff = typeof beta === 'number' ? beta - waterBucketBaseline.value.beta : 0
+  const rollOff = typeof gamma === 'number' ? gamma - waterBucketBaseline.value.gamma : 0
+  const hasTilt = typeof beta === 'number' && typeof gamma === 'number'
+  const tilt = hasTilt ? Math.hypot(pitchOff, rollOff) : null
 
+  // ── Angular velocity magnitude ──
+  // hypot of pitch-rate and roll-rate (°/s) from the gyroscope.
+  // Yaw (alpha) is excluded — spinning the phone on a flat table shouldn't spill.
+  const rotBeta = sample.rotationRate.beta ?? 0
+  const rotGamma = sample.rotationRate.gamma ?? 0
+  const rotation = Math.hypot(rotBeta, rotGamma)
+
+  // ── Momentum model ──
+  // Momentum represents the "sloshing energy" built up from sustained or sudden tilt.
+  // It rises proportionally to tilt severity and decays exponentially when the phone
+  // is held steady, modelling how real water keeps sloshing after you correct.
+  const prevMomentum = waterBucketMomentum.value
+  const tiltExcess = tilt != null ? Math.max(0, tilt - WATER_BUCKET_SAFE_TILT) : 0
+  // Build momentum: tiltExcess drives it up; higher tilt = faster buildup
+  const momentumGain = tiltExcess * 0.8 * deltaSec
+  // Rotation jerk adds momentum (sudden wrist flicks)
+  const rotationExcess = Math.max(0, rotation - WATER_BUCKET_SAFE_ROTATION)
+  const rotMomentumGain = rotationExcess * 0.15 * deltaSec
+  // Exponential decay toward 0 (half-life ~0.6 s when steady)
+  const decay = Math.exp(-1.1 * deltaSec)
+  const momentum = (prevMomentum + momentumGain + rotMomentumGain) * decay
+  waterBucketMomentum.value = momentum
+
+  // ── Spill rate (% of bucket per second) ──
+  // Combines three effects:
+  //   1. Static tilt: gentle quadratic ramp once past the safe zone.
+  //      Using (excess/range)² keeps low tilts very forgiving while steep tilts
+  //      drain fast. At SPILL_TILT the static component alone is ~12 %/s.
+  //   2. Momentum: linear contribution — sustained wobble or jerky corrections
+  //      keep draining even after you straighten the phone, like real sloshing.
+  //   3. Extreme tilt penalty: a flat +18 %/s once past SPILL_TILT to make
+  //      obviously bad tilts punishing (the bucket can't hold water sideways).
   let spillRate = 0
 
-  if (tilt != null) {
-    if (tilt > WATER_BUCKET_SAFE_TILT) {
-      spillRate += (tilt - WATER_BUCKET_SAFE_TILT) * 1.35
-    }
-
-    if (tilt > WATER_BUCKET_WARN_TILT) {
-      spillRate += (tilt - WATER_BUCKET_WARN_TILT) * 1.2
-    }
-
-    if (tilt > WATER_BUCKET_SPILL_TILT) {
-      spillRate += 16
-    }
+  if (tilt != null && tilt > WATER_BUCKET_SAFE_TILT) {
+    const range = WATER_BUCKET_SPILL_TILT - WATER_BUCKET_SAFE_TILT // 14°
+    const normExcess = tiltExcess / range // 0..1 at spill threshold
+    // Quadratic: gentle at low tilt, steep near spill threshold
+    spillRate += normExcess * normExcess * 12
   }
 
+  if (tilt != null && tilt > WATER_BUCKET_SPILL_TILT) {
+    spillRate += 18
+  }
+
+  // Momentum contribution — keeps water sloshing out after corrections
+  spillRate += momentum * 3.5
+
+  // Rotation adds a mild direct term on top of its momentum contribution
   if (rotation > WATER_BUCKET_SAFE_ROTATION) {
-    spillRate += (rotation - WATER_BUCKET_SAFE_ROTATION) * 0.22
+    spillRate += rotationExcess * 0.15
   }
 
-  const spillingNow = spillRate > 4
+  const spillingNow = spillRate > 2
 
   if (spillingNow && !waterBucketWasSpilling.value) {
     waterBucketSpillEvents.value += 1
     triggerHaptic(25)
   }
 
+  // Spawn visual droplets when spilling
+  if (spillingNow && waterBucketWaterLevel.value > 0) {
+    const side = rollOff > 0 ? 'right' : 'left'
+    const intensity = Math.min(3, Math.ceil(spillRate / 10))
+    if (Math.random() < 0.4 + spillRate * 0.02) {
+      spawnDroplets(intensity, side)
+    }
+  }
+
   waterBucketWasSpilling.value = spillingNow
   waterBucketWaterLevel.value = Math.max(
     0,
-    waterBucketWaterLevel.value - spillRate * (deltaMs / 1000)
+    waterBucketWaterLevel.value - spillRate * deltaSec
   )
 
   if (waterBucketWaterLevel.value <= 0) {
+    spawnDroplets(4, 'left')
+    spawnDroplets(4, 'right')
     stopWaterBucket('Bucket spilled. Reset and try to stay flatter.')
     return
   }
@@ -1637,99 +1720,154 @@ onBeforeUnmount(() => {
           </p>
         </section>
 
-        <section class="panel stack">
+        <section class="panel stack bucket-section">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Balance game</p>
-              <h2>Water bucket challenge</h2>
+              <p class="eyebrow">Balance challenge</p>
+              <h2>Water bucket</h2>
             </div>
-            <span class="chip">{{ safeDialFeedbackLabel }}</span>
+            <span
+              class="chip"
+              :class="{
+                'chip--active': waterBucketEnabled && waterBucketWaterLevel > 0,
+                'chip--done': !waterBucketEnabled && waterBucketLastDurationMs >= WATER_BUCKET_GOAL_MS && waterBucketWaterLevel > 0
+              }"
+              :style="waterBucketEnabled ? { borderColor: waterBucketRiskColor, color: waterBucketRiskColor } : {}"
+            >
+              {{ waterBucketRiskLabel }}
+            </span>
           </div>
 
-          <div class="water-bucket">
-            <div class="water-bucket__viz">
-              <div class="water-bucket__frame">
-                <span class="water-bucket__handle"></span>
+          <!-- Bucket visualization -->
+          <div class="bucket-scene">
+            <div
+              class="bucket-body"
+              :style="{
+                transform: `perspective(400px) rotateX(${waterBucketPitchVisual}deg) rotateZ(${clamp(-(waterBucketRollOffset ?? 0) * 0.3, -8, 8)}deg)`
+              }"
+            >
+              <!-- Handle arc -->
+              <svg class="bucket-handle-svg" viewBox="0 0 120 50" preserveAspectRatio="xMidYMax meet">
+                <path
+                  d="M 15 48 Q 15 8, 60 8 Q 105 8, 105 48"
+                  fill="none"
+                  stroke="rgba(180, 170, 140, 0.7)"
+                  stroke-width="4"
+                  stroke-linecap="round"
+                />
+              </svg>
+
+              <!-- Bucket shell (tapered) -->
+              <div class="bucket-shell">
+                <!-- Metal bands -->
+                <span class="bucket-band bucket-band--top"></span>
+                <span class="bucket-band bucket-band--bottom"></span>
+
+                <!-- Water fill -->
                 <div
-                  class="water-bucket__water"
+                  class="bucket-water"
+                  :class="{
+                    'bucket-water--sloshing': waterBucketEnabled && waterBucketTilt != null && waterBucketTilt > WATER_BUCKET_SAFE_TILT,
+                    'bucket-water--danger': waterBucketEnabled && waterBucketTilt != null && waterBucketTilt > WATER_BUCKET_WARN_TILT
+                  }"
                   :style="{
-                    height: `${Math.max(8, waterBucketWaterDisplay)}%`,
-                    transform: `translateX(${clamp((waterBucketRollOffset ?? 0) * 0.45, -14, 14)}px)`
+                    height: `${Math.max(3, waterBucketWaterDisplay * 0.84)}%`
                   }"
                 >
-                  <span
-                    class="water-bucket__surface"
+                  <!-- Surface wave -->
+                  <svg
+                    class="bucket-wave"
+                    viewBox="0 0 200 20"
+                    preserveAspectRatio="none"
                     :style="{
-                      transform: `translateX(-50%) rotate(${clamp(-(waterBucketRollOffset ?? 0), -18, 18)}deg)`
+                      transform: `translateX(${waterBucketSurfaceShift}px) rotate(${waterBucketSurfaceAngle}deg)`
                     }"
-                  ></span>
+                  >
+                    <path class="bucket-wave__back" d="M0 12 Q25 4,50 10 T100 10 T150 10 T200 10 V20 H0Z" />
+                    <path class="bucket-wave__front" d="M0 14 Q30 6,60 12 T120 12 T180 12 T200 12 V20 H0Z" />
+                  </svg>
                 </div>
-              </div>
-              <div class="water-bucket__caption">
-                <strong>{{ waterBucketWaterDisplay }}%</strong>
-                <small>water left</small>
+
+                <!-- Droplets -->
+                <span
+                  v-for="drop in waterBucketDroplets"
+                  :key="drop.id"
+                  class="bucket-droplet"
+                  :style="{
+                    left: `${drop.x}%`,
+                    width: `${drop.size}px`,
+                    height: `${drop.size}px`,
+                    '--dx': `${drop.dx * 12}px`,
+                    '--dy': `${drop.dy * 8}px`
+                  }"
+                ></span>
               </div>
             </div>
 
-            <div class="water-bucket__target">
-              <p class="eyebrow">Hold it like a tray</p>
-              <h3>{{ waterBucketEnabled ? 'Keep it flat' : 'Ready to balance' }}</h3>
-              <div class="safe-dial__stats">
-                <span>{{ (waterBucketElapsedMs / 1000).toFixed(1) }}s / 15.0s</span>
-                <span>
-                  {{
-                    waterBucketTilt == null ? 'Tilt n/a' : `${waterBucketTilt.toFixed(1)}° tilt`
-                  }}
-                </span>
-                <span>
-                  {{
-                    waterBucketRotationMagnitude == null
-                      ? 'Motion n/a'
-                      : `${waterBucketRotationMagnitude.toFixed(0)}°/s motion`
-                  }}
-                </span>
-                <span>{{ waterBucketRiskLabel }}</span>
-                <span>{{ waterBucketSpillEvents }} spill alerts</span>
-              </div>
-              <div class="guide-progress">
-                <div class="guide-progress__header">
-                  <span class="label">Bucket survival</span>
-                  <strong>{{ waterBucketGoalProgress }}%</strong>
-                </div>
-                <div class="guide-progress__track">
-                  <span
-                    class="guide-progress__fill"
-                    :style="{ width: `${waterBucketGoalProgress}%` }"
-                  ></span>
-                </div>
-              </div>
-              <p class="comparison-copy">
-                {{ waterBucketGuidanceCopy }}
-              </p>
+            <!-- Water level readout below bucket -->
+            <div class="bucket-level">
+              <strong
+                :style="{ color: waterBucketRiskColor }"
+              >{{ waterBucketWaterDisplay }}%</strong>
+              <small>water remaining</small>
             </div>
           </div>
 
-          <div class="water-bucket__stats">
-            <article class="safe-sequence-track__card">
-              <strong>{{ waterBucketPitchOffset == null ? 'n/a' : `${waterBucketPitchOffset.toFixed(1)}°` }}</strong>
-              <span>Pitch drift</span>
-              <small>front / back</small>
-            </article>
-            <article class="safe-sequence-track__card">
-              <strong>{{ waterBucketRollOffset == null ? 'n/a' : `${waterBucketRollOffset.toFixed(1)}°` }}</strong>
-              <span>Roll drift</span>
-              <small>left / right</small>
-            </article>
-            <article class="safe-sequence-track__card">
-              <strong>{{ (waterBucketBestTimeMs / 1000).toFixed(1) }}s</strong>
-              <span>Best run</span>
-              <small>personal record</small>
-            </article>
+          <!-- Timer ring + stats -->
+          <div class="bucket-dashboard">
+            <div class="bucket-timer">
+              <svg class="bucket-timer__ring" viewBox="0 0 80 80">
+                <circle cx="40" cy="40" r="34" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="5" />
+                <circle
+                  cx="40" cy="40" r="34"
+                  fill="none"
+                  :stroke="waterBucketGoalProgress >= 100 ? 'var(--accent-mint)' : 'var(--accent-sky)'"
+                  stroke-width="5"
+                  stroke-linecap="round"
+                  :stroke-dasharray="`${waterBucketGoalProgress * 2.136} 213.6`"
+                  transform="rotate(-90 40 40)"
+                  style="transition: stroke-dasharray 200ms ease"
+                />
+              </svg>
+              <div class="bucket-timer__text">
+                <strong>{{ (waterBucketElapsedMs / 1000).toFixed(1) }}</strong>
+                <small>/ {{ (WATER_BUCKET_GOAL_MS / 1000).toFixed(0) }}s</small>
+              </div>
+            </div>
+
+            <div class="bucket-metrics">
+              <div class="bucket-metric">
+                <span class="bucket-metric__value">
+                  {{ waterBucketTilt == null ? '--' : waterBucketTilt.toFixed(1) }}°
+                </span>
+                <span class="bucket-metric__label">Tilt</span>
+              </div>
+              <div class="bucket-metric">
+                <span class="bucket-metric__value">
+                  {{ waterBucketRotationMagnitude == null ? '--' : waterBucketRotationMagnitude.toFixed(0) }}°/s
+                </span>
+                <span class="bucket-metric__label">Motion</span>
+              </div>
+              <div class="bucket-metric">
+                <span class="bucket-metric__value">{{ waterBucketSpillEvents }}</span>
+                <span class="bucket-metric__label">Spills</span>
+              </div>
+              <div class="bucket-metric">
+                <span class="bucket-metric__value">{{ (waterBucketBestTimeMs / 1000).toFixed(1) }}s</span>
+                <span class="bucket-metric__label">Best</span>
+              </div>
+            </div>
           </div>
 
-          <div class="button-row">
-            <button class="button button--secondary" @click="startWaterBucketGame">
-              {{ waterBucketEnabled ? 'Restart Bucket Game' : 'Start Bucket Game' }}
+          <!-- Guidance -->
+          <p class="comparison-copy">
+            {{ waterBucketGuidanceCopy }}
+          </p>
+
+          <!-- Actions -->
+          <div class="bucket-actions">
+            <button class="button button--primary bucket-actions__main" @click="startWaterBucketGame">
+              {{ waterBucketEnabled ? 'Restart' : 'Start Challenge' }}
             </button>
             <button
               class="button button--ghost"
@@ -1743,13 +1881,14 @@ onBeforeUnmount(() => {
               :disabled="!isListening && currentSample.orientation.beta == null"
               @click="calibrateWaterBucket"
             >
-              Set Flat Point
+              Calibrate Flat
             </button>
           </div>
 
-          <p class="comparison-copy">
-            The bucket leaks when tilt or sudden wrist motion gets too high. Start with the
-            phone flat in your palm and see if you can keep water in the bucket for 15 seconds.
+          <p class="comparison-copy" style="font-size: 0.82rem;">
+            Hold the phone flat like a tray for {{ (WATER_BUCKET_GOAL_MS / 1000).toFixed(0) }} seconds.
+            Tilting spills water. Jerky corrections create momentum that keeps sloshing even after
+            you straighten out. {{ safeDialFeedbackLabel }} feedback on spill events.
           </p>
         </section>
 

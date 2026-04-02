@@ -492,31 +492,6 @@ button {
   font-size: 0.92rem;
 }
 
-.safe-dial__stats {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.55rem;
-}
-
-.safe-dial__stats span {
-  padding: 0.45rem 0.7rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
-  color: var(--text-soft);
-  font-size: 0.88rem;
-}
-
-.safe-dial__target {
-  display: grid;
-  gap: 0.8rem;
-}
-
-.safe-dial__target h3 {
-  margin: 0;
-  font-family: 'Cinzel', Georgia, serif;
-  font-size: clamp(1.3rem, 2vw, 2rem);
-}
-
 /* ── Vault / Safe dial ─────────────────────────────── */
 
 .safe-dial-section {
@@ -982,106 +957,249 @@ button {
   opacity: 0.25;
 }
 
-.water-bucket {
+/* ── Water bucket challenge ────────────────────────── */
+
+.bucket-scene {
   display: grid;
-  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+  gap: 0.6rem;
+  justify-items: center;
+  padding: 1.2rem 0 0.4rem;
+}
+
+.bucket-body {
+  position: relative;
+  width: min(58vw, 220px);
+  transition: transform 120ms ease-out;
+  transform-origin: 50% 80%;
+}
+
+/* SVG handle */
+.bucket-handle-svg {
+  display: block;
+  width: 65%;
+  margin: 0 auto -2px;
+  position: relative;
+  z-index: 1;
+}
+
+/* Tapered bucket shell */
+.bucket-shell {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 0.85;
+  background:
+    linear-gradient(175deg, rgba(120, 115, 100, 0.35), rgba(70, 65, 55, 0.5) 60%, rgba(50, 45, 38, 0.55));
+  border: 2.5px solid rgba(180, 170, 140, 0.45);
+  border-top: 2.5px solid rgba(200, 190, 160, 0.55);
+  border-radius: 6% 6% 18% 18% / 2% 2% 22% 22%;
+  overflow: hidden;
+  box-shadow:
+    inset 0 0 20px rgba(0, 0, 0, 0.35),
+    inset 0 2px 0 rgba(255, 255, 255, 0.08),
+    0 12px 36px rgba(0, 0, 0, 0.35);
+  /* Slight taper via clip-path */
+  clip-path: polygon(4% 0%, 96% 0%, 90% 100%, 10% 100%);
+}
+
+/* Metal bands */
+.bucket-band {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg,
+    rgba(180, 170, 140, 0.15),
+    rgba(220, 210, 180, 0.4) 30%,
+    rgba(180, 170, 140, 0.35) 50%,
+    rgba(220, 210, 180, 0.4) 70%,
+    rgba(180, 170, 140, 0.15)
+  );
+  z-index: 2;
+}
+
+.bucket-band--top {
+  top: 8%;
+}
+
+.bucket-band--bottom {
+  bottom: 18%;
+}
+
+/* Water fill */
+.bucket-water {
+  position: absolute;
+  left: 2%;
+  right: 2%;
+  bottom: 0;
+  background:
+    linear-gradient(180deg,
+      rgba(90, 190, 255, 0.0) 0%,
+      rgba(60, 160, 240, 0.7) 8%,
+      rgba(40, 130, 220, 0.82) 40%,
+      rgba(25, 100, 200, 0.88) 100%
+    );
+  border-radius: 0 0 16% 16% / 0 0 20% 20%;
+  transition: height 140ms linear;
+  overflow: visible;
+}
+
+/* Wave SVG on top of water */
+.bucket-wave {
+  position: absolute;
+  top: -8px;
+  left: -10%;
+  width: 120%;
+  height: 18px;
+  transition: transform 100ms ease-out;
+  transform-origin: 50% 50%;
+}
+
+.bucket-wave__back {
+  fill: rgba(100, 195, 255, 0.5);
+}
+
+.bucket-wave__front {
+  fill: rgba(140, 215, 255, 0.65);
+}
+
+.bucket-water--sloshing .bucket-wave {
+  animation: wave-slosh 0.6s ease-in-out infinite alternate;
+}
+
+.bucket-water--danger .bucket-wave {
+  animation: wave-slosh 0.35s ease-in-out infinite alternate;
+}
+
+@keyframes wave-slosh {
+  0% { transform: translateX(-4px) scaleY(1.1); }
+  100% { transform: translateX(4px) scaleY(0.9); }
+}
+
+/* Splash droplets */
+.bucket-droplet {
+  position: absolute;
+  top: 5%;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 35%, rgba(180, 230, 255, 0.9), rgba(80, 170, 255, 0.7));
+  box-shadow: 0 0 4px rgba(120, 200, 255, 0.4);
+  pointer-events: none;
+  z-index: 3;
+  animation: droplet-fly 1s ease-out forwards;
+}
+
+@keyframes droplet-fly {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: translate(var(--dx), var(--dy)) scale(0.8);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(calc(var(--dx) * 1.5), calc(var(--dy) * -2)) scale(0.3);
+  }
+}
+
+/* Level readout */
+.bucket-level {
+  display: grid;
+  gap: 0.1rem;
+  justify-items: center;
+}
+
+.bucket-level strong {
+  font-size: 2rem;
+  line-height: 1;
+  transition: color 200ms ease;
+}
+
+.bucket-level small {
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 0.72rem;
+}
+
+/* Timer + metrics row */
+.bucket-dashboard {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   gap: 1rem;
   align-items: center;
 }
 
-.water-bucket__viz {
-  display: grid;
-  gap: 0.8rem;
-  justify-items: center;
-}
-
-.water-bucket__frame {
+.bucket-timer {
   position: relative;
-  width: min(52vw, 210px);
-  aspect-ratio: 0.9;
-  border: 4px solid rgba(255, 244, 219, 0.78);
-  border-top: 0;
-  border-bottom-left-radius: 32px;
-  border-bottom-right-radius: 32px;
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(10, 12, 24, 0.18)),
-    rgba(255, 255, 255, 0.02);
-  overflow: hidden;
-  box-shadow:
-    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
-    0 20px 40px rgba(5, 9, 20, 0.28);
+  width: 80px;
+  height: 80px;
 }
 
-.water-bucket__handle {
+.bucket-timer__ring {
+  width: 100%;
+  height: 100%;
+}
+
+.bucket-timer__text {
   position: absolute;
-  left: 50%;
-  top: -32px;
-  width: 72%;
-  height: 70px;
-  border: 4px solid rgba(255, 214, 143, 0.72);
-  border-bottom: 0;
-  border-radius: 999px 999px 0 0;
-  transform: translateX(-50%);
-  opacity: 0.85;
-}
-
-.water-bucket__water {
-  position: absolute;
-  left: 8%;
-  right: 8%;
-  bottom: 8%;
-  border-radius: 28px 28px 22px 22px;
-  background:
-    linear-gradient(180deg, rgba(174, 236, 255, 0.94), rgba(69, 155, 255, 0.86)),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.2), transparent 55%);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.25),
-    0 0 22px rgba(102, 193, 255, 0.18);
-  transition:
-    height 120ms linear,
-    transform 120ms ease-out;
-}
-
-.water-bucket__surface {
-  position: absolute;
-  left: 50%;
-  top: 10px;
-  width: 126%;
-  height: 22px;
-  border-radius: 999px;
-  background: rgba(230, 250, 255, 0.78);
-  box-shadow: 0 0 18px rgba(232, 248, 255, 0.24);
-  transform-origin: 50% 50%;
-}
-
-.water-bucket__caption {
+  inset: 0;
   display: grid;
-  gap: 0.15rem;
-  justify-items: center;
+  place-items: center;
+  place-content: center;
+  gap: 0;
+  text-align: center;
 }
 
-.water-bucket__caption strong {
-  font-size: 1.9rem;
+.bucket-timer__text strong {
+  font-size: 1.15rem;
+  line-height: 1;
 }
 
-.water-bucket__caption small {
+.bucket-timer__text small {
+  font-size: 0.68rem;
+  color: var(--text-soft);
+}
+
+.bucket-metrics {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem;
+}
+
+.bucket-metric {
+  display: grid;
+  gap: 0.1rem;
+  padding: 0.5rem 0.6rem;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.bucket-metric__value {
+  font-weight: 700;
+  font-size: 0.95rem;
+}
+
+.bucket-metric__label {
+  font-size: 0.72rem;
   color: var(--text-soft);
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
 
-.water-bucket__target {
-  display: grid;
-  gap: 0.8rem;
+/* Actions */
+.bucket-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
 }
 
-.water-bucket__target h3 {
-  margin: 0;
-  font-family: 'Cinzel', Georgia, serif;
-  font-size: clamp(1.3rem, 2vw, 2rem);
+.bucket-actions__main {
+  flex: 1;
+  min-width: 140px;
 }
 
-.water-bucket__stats,
 .compass-stats {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1373,11 +1491,16 @@ button {
     grid-template-columns: 1.4rem auto 60px auto auto;
   }
 
-  .water-bucket {
+  .bucket-dashboard {
     grid-template-columns: 1fr;
+    justify-items: center;
   }
 
-  .water-bucket__stats,
+  .bucket-metrics {
+    grid-template-columns: repeat(4, 1fr);
+    width: 100%;
+  }
+
   .compass-stats {
     grid-template-columns: 1fr;
   }
