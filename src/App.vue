@@ -50,8 +50,25 @@ const safeDialStepIndex = ref(0)
 const safeDialStepStartTurn = ref(0)
 const safeDialGuideTickIndex = ref(0)
 const safeDialLastCompletedStep = ref(-1)
+const waterBucketEnabled = ref(false)
+const waterBucketBaseline = ref({
+  beta: 0,
+  gamma: 0
+})
+const waterBucketStartTimestamp = ref(0)
+const waterBucketLastTimestamp = ref(0)
+const waterBucketWaterLevel = ref(100)
+const waterBucketBestTimeMs = ref(0)
+const waterBucketLastDurationMs = ref(0)
+const waterBucketSpillEvents = ref(0)
+const waterBucketWasSpilling = ref(false)
 
 const SAFE_DIAL_GUIDE_DEGREES = 10
+const WATER_BUCKET_GOAL_MS = 15000
+const WATER_BUCKET_SAFE_TILT = 8
+const WATER_BUCKET_WARN_TILT = 14
+const WATER_BUCKET_SPILL_TILT = 22
+const WATER_BUCKET_SAFE_ROTATION = 22
 
 const accelTraceFields = [
   { label: 'ax', path: 'acceleration.x', color: '#ff9c73', scale: 12 },
@@ -202,6 +219,110 @@ const safeDialGuidanceCopy = computed(() => {
   }
 
   return `${safeDialStepRemaining.value.toFixed(0)}° remaining on this step. Light cues mark progress, strong confirmation marks the target.`
+})
+const waterBucketPitchOffset = computed(() => {
+  const beta = currentSample.value.orientation.beta
+
+  if (typeof beta !== 'number') {
+    return null
+  }
+
+  return beta - waterBucketBaseline.value.beta
+})
+const waterBucketRollOffset = computed(() => {
+  const gamma = currentSample.value.orientation.gamma
+
+  if (typeof gamma !== 'number') {
+    return null
+  }
+
+  return gamma - waterBucketBaseline.value.gamma
+})
+const waterBucketTilt = computed(() => {
+  if (waterBucketPitchOffset.value == null || waterBucketRollOffset.value == null) {
+    return null
+  }
+
+  return Math.hypot(waterBucketPitchOffset.value, waterBucketRollOffset.value)
+})
+const waterBucketRotationMagnitude = computed(() => {
+  const beta = currentSample.value.rotationRate.beta
+  const gamma = currentSample.value.rotationRate.gamma
+
+  if (typeof beta !== 'number' && typeof gamma !== 'number') {
+    return null
+  }
+
+  return Math.hypot(beta ?? 0, gamma ?? 0)
+})
+const waterBucketElapsedMs = computed(() => {
+  if (waterBucketEnabled.value && waterBucketLastTimestamp.value > waterBucketStartTimestamp.value) {
+    return waterBucketLastTimestamp.value - waterBucketStartTimestamp.value
+  }
+
+  return waterBucketLastDurationMs.value
+})
+const waterBucketGoalProgress = computed(() =>
+  Math.min(100, Math.round((waterBucketElapsedMs.value / WATER_BUCKET_GOAL_MS) * 100))
+)
+const waterBucketWaterDisplay = computed(() =>
+  Math.max(0, Math.min(100, Math.round(waterBucketWaterLevel.value)))
+)
+const waterBucketRiskLabel = computed(() => {
+  if (!waterBucketEnabled.value) {
+    return 'Waiting'
+  }
+
+  if (waterBucketWaterLevel.value <= 0) {
+    return 'Spilled'
+  }
+
+  if (waterBucketTilt.value == null) {
+    return 'No tilt data'
+  }
+
+  if (
+    waterBucketTilt.value >= WATER_BUCKET_SPILL_TILT ||
+    (waterBucketRotationMagnitude.value ?? 0) >= 70
+  ) {
+    return 'Major spill'
+  }
+
+  if (
+    waterBucketTilt.value >= WATER_BUCKET_WARN_TILT ||
+    (waterBucketRotationMagnitude.value ?? 0) >= 40
+  ) {
+    return 'Sloshing'
+  }
+
+  return 'Steady'
+})
+const waterBucketGuidanceCopy = computed(() => {
+  if (waterBucketEnabled.value) {
+    if (waterBucketWaterLevel.value <= 0) {
+      return 'The bucket emptied. Reset and keep the phone flatter and calmer on the next run.'
+    }
+
+    if (waterBucketTilt.value == null) {
+      return 'Orientation data has not arrived yet. Hold still for a moment.'
+    }
+
+    if (waterBucketTilt.value <= WATER_BUCKET_SAFE_TILT) {
+      return 'Nice and level. Keep the phone flat like a tray and avoid sudden wrist corrections.'
+    }
+
+    if (waterBucketTilt.value <= WATER_BUCKET_WARN_TILT) {
+      return 'A little wobble is creeping in. Ease back toward flat before the water starts to spill.'
+    }
+
+    return 'Too much tilt. Flatten the phone immediately and slow the motion to save the bucket.'
+  }
+
+  if (waterBucketLastDurationMs.value >= WATER_BUCKET_GOAL_MS && waterBucketWaterLevel.value > 0) {
+    return 'Bucket saved. You held it flat for the full challenge window.'
+  }
+
+  return 'Calibrate while the phone is flat, then hold it steady for 15 seconds without spilling the water.'
 })
 
 const liveAcceleration = computed(() => [
@@ -475,6 +596,10 @@ function buildTickPattern(duration = 12) {
   return duration
 }
 
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value))
+}
+
 function getSafeDialStepDegrees(step) {
   return Math.max(5, Math.min(360, Math.round(Number(step?.degrees) || 0)))
 }
@@ -504,6 +629,142 @@ function resetSafeDialBaseline(angle = safeDialAbsoluteAngle.value) {
   safeDialStepStartTurn.value = 0
   safeDialGuideTickIndex.value = 0
   safeDialLastCompletedStep.value = -1
+}
+
+function resetWaterBucketRun() {
+  waterBucketStartTimestamp.value = 0
+  waterBucketLastTimestamp.value = 0
+  waterBucketWaterLevel.value = 100
+  waterBucketLastDurationMs.value = 0
+  waterBucketSpillEvents.value = 0
+  waterBucketWasSpilling.value = false
+}
+
+function calibrateWaterBucket() {
+  waterBucketBaseline.value = {
+    beta: currentSample.value.orientation.beta ?? 0,
+    gamma: currentSample.value.orientation.gamma ?? 0
+  }
+  triggerHaptic(20)
+  statusMessage.value = waterBucketEnabled.value
+    ? 'Bucket baseline reset. Hold it flat and steady.'
+    : 'Bucket flat point captured.'
+}
+
+function stopWaterBucket(customMessage = 'Bucket game stopped.') {
+  if (!waterBucketEnabled.value) {
+    return
+  }
+
+  waterBucketEnabled.value = false
+  waterBucketLastDurationMs.value = Math.max(
+    waterBucketLastDurationMs.value,
+    Math.max(0, waterBucketLastTimestamp.value - waterBucketStartTimestamp.value)
+  )
+  waterBucketBestTimeMs.value = Math.max(
+    waterBucketBestTimeMs.value,
+    waterBucketLastDurationMs.value
+  )
+  waterBucketWasSpilling.value = false
+  statusMessage.value = customMessage
+}
+
+async function startWaterBucketGame() {
+  await primePhaseFeedback()
+
+  const ready = await ensureSensorsReady(
+    `Water bucket challenge started. Keep the phone flat for ${(
+      WATER_BUCKET_GOAL_MS / 1000
+    ).toFixed(0)} seconds. ${feedbackHint()}`
+  )
+  if (!ready) {
+    return
+  }
+
+  calibrateWaterBucket()
+  resetWaterBucketRun()
+  waterBucketEnabled.value = true
+  const timestamp = currentSample.value.timestamp || performance.now()
+  waterBucketStartTimestamp.value = timestamp
+  waterBucketLastTimestamp.value = timestamp
+  statusMessage.value = `Water bucket challenge live. Hold flat for ${(
+    WATER_BUCKET_GOAL_MS / 1000
+  ).toFixed(0)} seconds.`
+}
+
+function processWaterBucketSample(sample) {
+  if (!waterBucketEnabled.value) {
+    return
+  }
+
+  const timestamp = sample.timestamp || performance.now()
+
+  if (!waterBucketStartTimestamp.value) {
+    waterBucketStartTimestamp.value = timestamp
+  }
+
+  if (!waterBucketLastTimestamp.value) {
+    waterBucketLastTimestamp.value = timestamp
+    return
+  }
+
+  const deltaMs = clamp(timestamp - waterBucketLastTimestamp.value, 0, 160)
+  waterBucketLastTimestamp.value = timestamp
+  waterBucketLastDurationMs.value = Math.max(0, timestamp - waterBucketStartTimestamp.value)
+
+  const beta = sample.orientation.beta
+  const gamma = sample.orientation.gamma
+  const tilt =
+    typeof beta === 'number' && typeof gamma === 'number'
+      ? Math.hypot(
+          beta - waterBucketBaseline.value.beta,
+          gamma - waterBucketBaseline.value.gamma
+        )
+      : null
+  const rotation = Math.hypot(sample.rotationRate.beta ?? 0, sample.rotationRate.gamma ?? 0)
+
+  let spillRate = 0
+
+  if (tilt != null) {
+    if (tilt > WATER_BUCKET_SAFE_TILT) {
+      spillRate += (tilt - WATER_BUCKET_SAFE_TILT) * 1.35
+    }
+
+    if (tilt > WATER_BUCKET_WARN_TILT) {
+      spillRate += (tilt - WATER_BUCKET_WARN_TILT) * 1.2
+    }
+
+    if (tilt > WATER_BUCKET_SPILL_TILT) {
+      spillRate += 16
+    }
+  }
+
+  if (rotation > WATER_BUCKET_SAFE_ROTATION) {
+    spillRate += (rotation - WATER_BUCKET_SAFE_ROTATION) * 0.22
+  }
+
+  const spillingNow = spillRate > 4
+
+  if (spillingNow && !waterBucketWasSpilling.value) {
+    waterBucketSpillEvents.value += 1
+    triggerHaptic(25)
+  }
+
+  waterBucketWasSpilling.value = spillingNow
+  waterBucketWaterLevel.value = Math.max(
+    0,
+    waterBucketWaterLevel.value - spillRate * (deltaMs / 1000)
+  )
+
+  if (waterBucketWaterLevel.value <= 0) {
+    stopWaterBucket('Bucket spilled. Reset and try to stay flatter.')
+    return
+  }
+
+  if (waterBucketLastDurationMs.value >= WATER_BUCKET_GOAL_MS) {
+    triggerSuccessFeedback()
+    stopWaterBucket('Bucket saved. Full balance challenge complete.')
+  }
 }
 
 function loadSafeDialPreset(presetName) {
@@ -763,6 +1024,8 @@ function removeSpell(id) {
 }
 
 const stopSampleSubscription = onSample((sample) => {
+  processWaterBucketSample(sample)
+
   if (!recordingMode.value || !sample.timestamp) {
     return
   }
@@ -1271,6 +1534,122 @@ onBeforeUnmount(() => {
           <p class="comparison-copy">
             Build a real sequence like a lock combination. The dial gives light guide cues
             every {{ SAFE_DIAL_GUIDE_DEGREES }}° and a strong confirmation exactly when a step locks.
+          </p>
+        </section>
+
+        <section class="panel stack">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Balance game</p>
+              <h2>Water bucket challenge</h2>
+            </div>
+            <span class="chip">{{ safeDialFeedbackLabel }}</span>
+          </div>
+
+          <div class="water-bucket">
+            <div class="water-bucket__viz">
+              <div class="water-bucket__frame">
+                <span class="water-bucket__handle"></span>
+                <div
+                  class="water-bucket__water"
+                  :style="{
+                    height: `${Math.max(8, waterBucketWaterDisplay)}%`,
+                    transform: `translateX(${clamp((waterBucketRollOffset ?? 0) * 0.45, -14, 14)}px)`
+                  }"
+                >
+                  <span
+                    class="water-bucket__surface"
+                    :style="{
+                      transform: `translateX(-50%) rotate(${clamp(-(waterBucketRollOffset ?? 0), -18, 18)}deg)`
+                    }"
+                  ></span>
+                </div>
+              </div>
+              <div class="water-bucket__caption">
+                <strong>{{ waterBucketWaterDisplay }}%</strong>
+                <small>water left</small>
+              </div>
+            </div>
+
+            <div class="water-bucket__target">
+              <p class="eyebrow">Hold it like a tray</p>
+              <h3>{{ waterBucketEnabled ? 'Keep it flat' : 'Ready to balance' }}</h3>
+              <div class="safe-dial__stats">
+                <span>{{ (waterBucketElapsedMs / 1000).toFixed(1) }}s / 15.0s</span>
+                <span>
+                  {{
+                    waterBucketTilt == null ? 'Tilt n/a' : `${waterBucketTilt.toFixed(1)}° tilt`
+                  }}
+                </span>
+                <span>
+                  {{
+                    waterBucketRotationMagnitude == null
+                      ? 'Motion n/a'
+                      : `${waterBucketRotationMagnitude.toFixed(0)}°/s motion`
+                  }}
+                </span>
+                <span>{{ waterBucketRiskLabel }}</span>
+                <span>{{ waterBucketSpillEvents }} spill alerts</span>
+              </div>
+              <div class="guide-progress">
+                <div class="guide-progress__header">
+                  <span class="label">Bucket survival</span>
+                  <strong>{{ waterBucketGoalProgress }}%</strong>
+                </div>
+                <div class="guide-progress__track">
+                  <span
+                    class="guide-progress__fill"
+                    :style="{ width: `${waterBucketGoalProgress}%` }"
+                  ></span>
+                </div>
+              </div>
+              <p class="comparison-copy">
+                {{ waterBucketGuidanceCopy }}
+              </p>
+            </div>
+          </div>
+
+          <div class="water-bucket__stats">
+            <article class="safe-sequence-track__card">
+              <strong>{{ waterBucketPitchOffset == null ? 'n/a' : `${waterBucketPitchOffset.toFixed(1)}°` }}</strong>
+              <span>Pitch drift</span>
+              <small>front / back</small>
+            </article>
+            <article class="safe-sequence-track__card">
+              <strong>{{ waterBucketRollOffset == null ? 'n/a' : `${waterBucketRollOffset.toFixed(1)}°` }}</strong>
+              <span>Roll drift</span>
+              <small>left / right</small>
+            </article>
+            <article class="safe-sequence-track__card">
+              <strong>{{ (waterBucketBestTimeMs / 1000).toFixed(1) }}s</strong>
+              <span>Best run</span>
+              <small>personal record</small>
+            </article>
+          </div>
+
+          <div class="button-row">
+            <button class="button button--secondary" @click="startWaterBucketGame">
+              {{ waterBucketEnabled ? 'Restart Bucket Game' : 'Start Bucket Game' }}
+            </button>
+            <button
+              class="button button--ghost"
+              :disabled="!waterBucketEnabled"
+              @click="stopWaterBucket()"
+            >
+              Stop
+            </button>
+            <button
+              class="button button--ghost"
+              :disabled="!isListening && currentSample.orientation.beta == null"
+              @click="calibrateWaterBucket"
+            >
+              Set Flat Point
+            </button>
+          </div>
+
+          <p class="comparison-copy">
+            The bucket leaks when tilt or sudden wrist motion gets too high. Start with the
+            phone flat in your palm and see if you can keep water in the bucket for 15 seconds.
           </p>
         </section>
 

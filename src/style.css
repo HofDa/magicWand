@@ -680,6 +680,111 @@ button {
   font-size: clamp(1.3rem, 2vw, 2rem);
 }
 
+.water-bucket {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: center;
+}
+
+.water-bucket__viz {
+  display: grid;
+  gap: 0.8rem;
+  justify-items: center;
+}
+
+.water-bucket__frame {
+  position: relative;
+  width: min(52vw, 210px);
+  aspect-ratio: 0.9;
+  border: 4px solid rgba(255, 244, 219, 0.78);
+  border-top: 0;
+  border-bottom-left-radius: 32px;
+  border-bottom-right-radius: 32px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(10, 12, 24, 0.18)),
+    rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+  box-shadow:
+    inset 0 0 0 1px rgba(255, 255, 255, 0.06),
+    0 20px 40px rgba(5, 9, 20, 0.28);
+}
+
+.water-bucket__handle {
+  position: absolute;
+  left: 50%;
+  top: -32px;
+  width: 72%;
+  height: 70px;
+  border: 4px solid rgba(255, 214, 143, 0.72);
+  border-bottom: 0;
+  border-radius: 999px 999px 0 0;
+  transform: translateX(-50%);
+  opacity: 0.85;
+}
+
+.water-bucket__water {
+  position: absolute;
+  left: 8%;
+  right: 8%;
+  bottom: 8%;
+  border-radius: 28px 28px 22px 22px;
+  background:
+    linear-gradient(180deg, rgba(174, 236, 255, 0.94), rgba(69, 155, 255, 0.86)),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.2), transparent 55%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.25),
+    0 0 22px rgba(102, 193, 255, 0.18);
+  transition:
+    height 120ms linear,
+    transform 120ms ease-out;
+}
+
+.water-bucket__surface {
+  position: absolute;
+  left: 50%;
+  top: 10px;
+  width: 126%;
+  height: 22px;
+  border-radius: 999px;
+  background: rgba(230, 250, 255, 0.78);
+  box-shadow: 0 0 18px rgba(232, 248, 255, 0.24);
+  transform-origin: 50% 50%;
+}
+
+.water-bucket__caption {
+  display: grid;
+  gap: 0.15rem;
+  justify-items: center;
+}
+
+.water-bucket__caption strong {
+  font-size: 1.9rem;
+}
+
+.water-bucket__caption small {
+  color: var(--text-soft);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.water-bucket__target {
+  display: grid;
+  gap: 0.8rem;
+}
+
+.water-bucket__target h3 {
+  margin: 0;
+  font-family: 'Cinzel', Georgia, serif;
+  font-size: clamp(1.3rem, 2vw, 2rem);
+}
+
+.water-bucket__stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
 .safe-sequence-track__card {
   display: grid;
   gap: 0.25rem;
@@ -824,6 +929,14 @@ button {
   }
 
   .safe-dial {
+    grid-template-columns: 1fr;
+  }
+
+  .water-bucket {
+    grid-template-columns: 1fr;
+  }
+
+  .water-bucket__stats {
     grid-template-columns: 1fr;
   }
 
