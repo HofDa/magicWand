@@ -51,6 +51,7 @@ const safeDialStepIndex = ref(0)
 const safeDialStepStartTurn = ref(0)
 const safeDialGuideTickIndex = ref(0)
 const safeDialLastCompletedStep = ref(-1)
+let safeDialSettleStart = 0
 const waterBucketEnabled = ref(false)
 const waterBucketBaseline = ref({
   beta: 0,
@@ -71,7 +72,15 @@ const heightCalcUnit = ref('m')
 const heightCalcAngleLocked = ref(null)
 const heightCalcEyeHeight = ref(1.6)
 
+const widthCalcDistance = ref(10)
+const widthCalcUnit = ref('m')
+const widthCalcLeftHeading = ref(null)
+const widthCalcRightHeading = ref(null)
+
 const SAFE_DIAL_GUIDE_DEGREES = 10
+const SAFE_DIAL_LOCK_TOLERANCE = 4    // ° — must be within this of the target to lock
+const SAFE_DIAL_REVERSE_RESET = 12    // ° — reversing this far resets the current step
+const SAFE_DIAL_SETTLE_MS = 280       // ms — must stay near target this long to lock
 const WATER_BUCKET_GOAL_MS = 15000
 // ── Production-tuned thresholds ──────────────────────────────────────
 // Real phone IMUs report 2-5° of noise from hand tremor alone. Previous
@@ -123,12 +132,14 @@ const safeDialAbsoluteAngle = computed(() => {
 
   return null
 })
+// ── Visual dial angle ─────────────────────────────────────────────────
+// Uses the continuously accumulated angle instead of raw heading subtraction.
+// This prevents the CSS rotate() from jumping 358° when heading crosses 0°/360°.
 const safeDialRelativeAngle = computed(() => {
   if (safeDialAbsoluteAngle.value == null) {
     return null
   }
-
-  return ((safeDialAbsoluteAngle.value - safeDialZeroAngle.value + 360) % 360)
+  return safeDialAccumulatedAngle.value
 })
 const safeDialCurrentStep = computed(
   () => safeDialSequence.value[safeDialStepIndex.value] ?? null
@@ -216,7 +227,7 @@ const safeDialCurrentInstruction = computed(() => {
 })
 const safeDialGuidanceCopy = computed(() => {
   if (safeDialSequenceComplete.value) {
-    return 'Strong confirmation fired. Restart the sequence to run it again.'
+    return 'Safe opened. Restart the sequence to run it again.'
   }
 
   if (!safeDialCurrentStep.value) {
@@ -224,14 +235,18 @@ const safeDialGuidanceCopy = computed(() => {
   }
 
   if (!safeDialEnabled.value) {
-    return 'Set the sequence, then arm the dial and rotate the phone like a lock dial.'
+    return 'Set the combination, then arm the dial. Rotate the phone smoothly and stop at each target — just like a real safe.'
   }
 
   if (safeDialWrongDirection.value) {
-    return 'Reverse direction. You are moving away from the current target.'
+    return 'Wrong direction — keep going and the step will reset. Turn back the correct way.'
   }
 
-  return `${safeDialStepRemaining.value.toFixed(0)}° remaining on this step. Light cues mark progress, strong confirmation marks the target.`
+  if (safeDialStepRemaining.value <= SAFE_DIAL_LOCK_TOLERANCE) {
+    return 'You\'re at the target — hold steady to lock.'
+  }
+
+  return `${safeDialStepRemaining.value.toFixed(0)}° to go. Approach slowly — overshoot resets the step.`
 })
 const waterBucketPitchOffset = computed(() => {
   const beta = currentSample.value.orientation.beta
@@ -371,6 +386,28 @@ const heightCalcResult = computed(() => {
 const heightCalcUnitLabel = computed(() => {
   const labels = { m: 'metres', ft: 'feet', yd: 'yards' }
   return labels[heightCalcUnit.value] || heightCalcUnit.value
+})
+
+const widthCalcLiveHeading = computed(() => {
+  const heading = currentSample.value.orientation.compassHeading
+  if (typeof heading !== 'number') return null
+  return heading
+})
+const widthCalcAngleSpan = computed(() => {
+  if (widthCalcLeftHeading.value == null || widthCalcRightHeading.value == null) return null
+  let delta = widthCalcRightHeading.value - widthCalcLeftHeading.value
+  if (delta < 0) delta += 360
+  if (delta > 180) delta = 360 - delta
+  return delta
+})
+const widthCalcResult = computed(() => {
+  if (widthCalcAngleSpan.value == null) return null
+  const rad = (widthCalcAngleSpan.value * Math.PI) / 180
+  return 2 * widthCalcDistance.value * Math.tan(rad / 2)
+})
+const widthCalcUnitLabel = computed(() => {
+  const labels = { m: 'metres', ft: 'feet', yd: 'yards' }
+  return labels[widthCalcUnit.value] || widthCalcUnit.value
 })
 
 const liveAcceleration = computed(() => [
@@ -677,6 +714,7 @@ function resetSafeDialBaseline(angle = safeDialAbsoluteAngle.value) {
   safeDialStepStartTurn.value = 0
   safeDialGuideTickIndex.value = 0
   safeDialLastCompletedStep.value = -1
+  safeDialSettleStart = 0
 }
 
 function resetWaterBucketRun() {
@@ -989,6 +1027,21 @@ function unlockHeightAngle() {
   heightCalcAngleLocked.value = null
 }
 
+function lockWidthLeft() {
+  widthCalcLeftHeading.value = widthCalcLiveHeading.value
+  triggerHaptic(20)
+}
+
+function lockWidthRight() {
+  widthCalcRightHeading.value = widthCalcLiveHeading.value
+  triggerHaptic(20)
+}
+
+function resetWidthCalc() {
+  widthCalcLeftHeading.value = null
+  widthCalcRightHeading.value = null
+}
+
 function persistSpellbook() {
   return saveSpellbook(spellbook.value)
 }
@@ -1182,16 +1235,23 @@ watch(activeGuideIndex, (index) => {
   triggerHaptic(35)
 })
 
+// ── Safe dial watcher ──────────────────────────────────────────────────
+// ALWAYS tracks deltas so the visual dial never jumps at the 0°/360° boundary.
+// Step processing only runs when the dial is armed.
+//
+// Real safe dial mechanics:
+//   • The user must STOP within a tolerance window of the target — just
+//     passing through it doesn't count. This models the physical detent.
+//   • Turning in the wrong direction beyond a threshold resets the step,
+//     just like a real safe where reversing disengages the wheel pack.
+//   • A brief settling period (the user must stay near the target for a
+//     moment) prevents accidental triggers from fast sweeps.
 watch(safeDialAbsoluteAngle, (angle) => {
-  if (!safeDialEnabled.value || angle == null) {
+  if (angle == null) {
     return
   }
 
-  if (recordingMode.value) {
-    safeDialLastAngle.value = angle
-    return
-  }
-
+  // Always track deltas for smooth visual, even when not armed
   if (safeDialLastAngle.value == null) {
     safeDialLastAngle.value = angle
     return
@@ -1200,6 +1260,7 @@ watch(safeDialAbsoluteAngle, (angle) => {
   const delta = wrapAngleDelta(angle, safeDialLastAngle.value)
   safeDialLastAngle.value = angle
 
+  // Reject sensor noise — small jitter shouldn't move the dial
   if (Math.abs(delta) < 1.5) {
     return
   }
@@ -1207,23 +1268,72 @@ watch(safeDialAbsoluteAngle, (angle) => {
   safeDialLastDelta.value = delta
   safeDialAccumulatedAngle.value += delta
 
+  // Stop here if dial is not armed or a recording is in progress
+  if (!safeDialEnabled.value || recordingMode.value) {
+    return
+  }
+
   if (!safeDialCurrentStep.value) {
+    return
+  }
+
+  // ── Wrong-direction reset ──
+  // On a real safe, turning the wrong way disengages the wheel pack.
+  // If the user reverses beyond the threshold, reset this step to the
+  // current position so they have to start the rotation over.
+  if (safeDialSignedStepProgress.value < -SAFE_DIAL_REVERSE_RESET) {
+    safeDialStepStartTurn.value = safeDialAccumulatedAngle.value
+    safeDialGuideTickIndex.value = 0
+    safeDialSettleStart = 0
+    triggerHaptic(15)
+    statusMessage.value = `Wrong direction — step reset. ${safeDialCurrentInstruction.value}.`
     return
   }
 
   const stepDegrees = getSafeDialStepDegrees(safeDialCurrentStep.value)
   const progress = safeDialStepProgress.value
-  const nextGuideTick = Math.floor(Math.min(progress, stepDegrees) / SAFE_DIAL_GUIDE_DEGREES)
 
+  // ── Haptic guide ticks ──
+  const nextGuideTick = Math.floor(Math.min(progress, stepDegrees) / SAFE_DIAL_GUIDE_DEGREES)
   if (nextGuideTick > safeDialGuideTickIndex.value && progress < stepDegrees) {
     safeDialGuideTickIndex.value = nextGuideTick
     triggerHaptic(buildTickPattern(10))
   }
 
-  if (progress < stepDegrees) {
+  // ── Lock detection ──
+  // The user must be within LOCK_TOLERANCE of the target AND hold steady
+  // for SETTLE_MS, modelling the physical click of a real safe.
+  const overshoot = progress - stepDegrees
+  const withinLockZone = overshoot >= -SAFE_DIAL_LOCK_TOLERANCE && overshoot <= SAFE_DIAL_LOCK_TOLERANCE
+
+  if (!withinLockZone) {
+    safeDialSettleStart = 0
+
+    // If the user overshoots far past the target, that's also a miss on a real safe.
+    // Reset the step so they have to approach again.
+    if (overshoot > SAFE_DIAL_LOCK_TOLERANCE + 8) {
+      safeDialStepStartTurn.value = safeDialAccumulatedAngle.value
+      safeDialGuideTickIndex.value = 0
+      triggerHaptic(15)
+      statusMessage.value = `Overshot the target. Approach ${stepDegrees}° more slowly.`
+    }
+
     return
   }
 
+  // User is in the lock zone — start or continue settling
+  const now = performance.now()
+  if (!safeDialSettleStart) {
+    safeDialSettleStart = now
+    return
+  }
+
+  if (now - safeDialSettleStart < SAFE_DIAL_SETTLE_MS) {
+    return
+  }
+
+  // ── Step locked ──
+  safeDialSettleStart = 0
   const completedIndex = safeDialStepIndex.value
   const isFinalStep = completedIndex >= safeDialSequence.value.length - 1
 
@@ -1458,6 +1568,115 @@ onBeforeUnmount(() => {
           </p>
         </section>
 
+        <section class="panel stack" v-if="selectedSpell">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Movement guide</p>
+              <h2>{{ selectedSpell.name }}</h2>
+            </div>
+            <span class="chip">{{ selectedSpell.metrics.sampleCount }} samples</span>
+          </div>
+
+          <div class="spell-stats">
+            <span>Duration {{ (selectedSpell.metrics.durationMs / 1000).toFixed(1) }}s</span>
+            <span>Peak rotation {{ selectedSpell.metrics.peakRotation }}</span>
+            <span>Heading span {{ selectedSpell.metrics.headingSpan }}°</span>
+          </div>
+
+          <div v-if="selectedGuide.length" class="guide-progress">
+            <div class="guide-progress__header">
+              <span class="label">Copy progress</span>
+              <strong>
+                {{
+                  recordingMode === 'attempt'
+                    ? `${copyProgressPercent}%`
+                    : `${selectedGuide.length} phases`
+                }}
+              </strong>
+            </div>
+            <div class="guide-progress__track">
+              <span
+                class="guide-progress__fill"
+                :style="{ width: `${copyProgressPercent}%` }"
+              ></span>
+            </div>
+            <p class="comparison-copy">
+              <template v-if="recordingMode === 'attempt' && activeGuide">
+                Now: {{ activeGuide.motionSymbol }} {{ activeGuide.motionCue }} with
+                {{ activeGuide.wristSymbol }} {{ activeGuide.wristCue }} for
+                {{ activeGuide.durationLabel }}.
+              </template>
+              <template v-else>
+                Use the phase cards below as the literal movement path for the copy attempt.
+              </template>
+            </p>
+          </div>
+
+          <div v-if="selectedGuide.length" class="guide-cards">
+            <article
+              v-for="segment in selectedGuide"
+              :key="segment.index"
+              class="guide-card"
+              :class="{
+                'guide-card--active':
+                  recordingMode === 'attempt' && segment.index === activeGuideIndex
+              }"
+            >
+              <span class="guide-card__phase">Phase {{ segment.index + 1 }}</span>
+              <div class="guide-card__symbols">
+                <strong>{{ segment.motionSymbol }}</strong>
+                <strong>{{ segment.wristSymbol }}</strong>
+              </div>
+              <div class="guide-card__meta">
+                <span>{{ segment.motionCue }}</span>
+                <span>{{ segment.wristCue }}</span>
+              </div>
+              <p>{{ segment.stepText }}</p>
+            </article>
+          </div>
+
+          <ol class="instruction-list">
+            <li
+              v-for="step in selectedGuide.length ? selectedGuide : selectedSpell.instructions"
+              :key="selectedGuide.length ? step.index : step"
+            >
+              {{ selectedGuide.length ? step.stepText : step }}
+            </li>
+          </ol>
+
+          <p class="comparison-copy">
+            Select this template, tap Start Copy Mode, perform the steps above, then tap Score Copy.
+          </p>
+        </section>
+
+        <section class="panel stack" :data-tone="comparisonTone">
+          <div class="section-head">
+            <div>
+              <p class="eyebrow">Match result</p>
+              <h2>Copy analysis</h2>
+            </div>
+          </div>
+
+          <template v-if="latestComparison">
+            <div class="score-card">
+              <strong>{{ latestComparison.score }}</strong>
+              <span>/ 100</span>
+              <small>{{ latestComparison.verdict }}</small>
+            </div>
+            <p class="comparison-copy">
+              Template duration {{ (latestComparison.templateMetrics.durationMs / 1000).toFixed(1) }}s,
+              copy duration {{ (latestComparison.attemptMetrics.durationMs / 1000).toFixed(1) }}s.
+            </p>
+            <ul class="tips-list">
+              <li v-for="tip in latestComparison.tips" :key="tip">{{ tip }}</li>
+            </ul>
+          </template>
+          <p v-else class="comparison-copy">
+            Record a copy attempt after selecting a spell to see similarity scoring and
+            coaching tips.
+          </p>
+        </section>
+
         <section class="panel stack safe-dial-section">
           <div class="section-head">
             <div>
@@ -1534,7 +1753,7 @@ onBeforeUnmount(() => {
                   {{
                     safeDialRelativeAngle == null
                       ? '--'
-                      : `${Math.round(safeDialRelativeAngle) % 360}°`
+                      : `${((Math.round(safeDialRelativeAngle) % 360) + 360) % 360}°`
                   }}
                 </strong>
                 <small :class="{ 'vault-dial__direction--wrong': safeDialWrongDirection }">
@@ -1720,8 +1939,9 @@ onBeforeUnmount(() => {
           </details>
 
           <p class="comparison-copy" style="font-size: 0.82rem;">
-            Rotate your phone like a real safe dial. {{ safeDialFeedbackLabel }} feedback
-            fires every {{ SAFE_DIAL_GUIDE_DEGREES }}° and a strong pulse at each lock point.
+            Rotate your phone like a real combination safe. Approach each target slowly and hold
+            steady to lock — overshoot or wrong direction resets the step. {{ safeDialFeedbackLabel }}
+            feedback ticks every {{ SAFE_DIAL_GUIDE_DEGREES }}° and a strong pulse confirms each lock.
           </p>
         </section>
 
@@ -2132,114 +2352,182 @@ onBeforeUnmount(() => {
           </p>
         </section>
 
-        <section class="panel stack" v-if="selectedSpell">
+        <section class="panel stack width-calc-section">
           <div class="section-head">
             <div>
-              <p class="eyebrow">Movement guide</p>
-              <h2>{{ selectedSpell.name }}</h2>
+              <p class="eyebrow">Clinometer</p>
+              <h2>Width calculator</h2>
             </div>
-            <span class="chip">{{ selectedSpell.metrics.sampleCount }} samples</span>
-          </div>
-
-          <div class="spell-stats">
-            <span>Duration {{ (selectedSpell.metrics.durationMs / 1000).toFixed(1) }}s</span>
-            <span>Peak rotation {{ selectedSpell.metrics.peakRotation }}</span>
-            <span>Heading span {{ selectedSpell.metrics.headingSpan }}°</span>
-          </div>
-
-          <div v-if="selectedGuide.length" class="guide-progress">
-            <div class="guide-progress__header">
-              <span class="label">Copy progress</span>
-              <strong>
-                {{
-                  recordingMode === 'attempt'
-                    ? `${copyProgressPercent}%`
-                    : `${selectedGuide.length} phases`
-                }}
-              </strong>
-            </div>
-            <div class="guide-progress__track">
-              <span
-                class="guide-progress__fill"
-                :style="{ width: `${copyProgressPercent}%` }"
-              ></span>
-            </div>
-            <p class="comparison-copy">
-              <template v-if="recordingMode === 'attempt' && activeGuide">
-                Now: {{ activeGuide.motionSymbol }} {{ activeGuide.motionCue }} with
-                {{ activeGuide.wristSymbol }} {{ activeGuide.wristCue }} for
-                {{ activeGuide.durationLabel }}.
-              </template>
-              <template v-else>
-                Use the phase cards below as the literal movement path for the copy attempt.
-              </template>
-            </p>
-          </div>
-
-          <div v-if="selectedGuide.length" class="guide-cards">
-            <article
-              v-for="segment in selectedGuide"
-              :key="segment.index"
-              class="guide-card"
+            <span
+              class="chip"
               :class="{
-                'guide-card--active':
-                  recordingMode === 'attempt' && segment.index === activeGuideIndex
+                'chip--active': widthCalcLeftHeading != null && widthCalcRightHeading == null,
+                'chip--done': widthCalcLeftHeading != null && widthCalcRightHeading != null
               }"
             >
-              <span class="guide-card__phase">Phase {{ segment.index + 1 }}</span>
-              <div class="guide-card__symbols">
-                <strong>{{ segment.motionSymbol }}</strong>
-                <strong>{{ segment.wristSymbol }}</strong>
-              </div>
-              <div class="guide-card__meta">
-                <span>{{ segment.motionCue }}</span>
-                <span>{{ segment.wristCue }}</span>
-              </div>
-              <p>{{ segment.stepText }}</p>
-            </article>
+              {{
+                widthCalcLeftHeading != null && widthCalcRightHeading != null
+                  ? 'Measured'
+                  : widthCalcLeftHeading != null
+                    ? 'Left locked'
+                    : 'Ready'
+              }}
+            </span>
           </div>
 
-          <ol class="instruction-list">
-            <li
-              v-for="step in selectedGuide.length ? selectedGuide : selectedSpell.instructions"
-              :key="selectedGuide.length ? step.index : step"
+          <!-- Width visual -->
+          <div class="width-calc-visual">
+            <div class="width-calc-compass">
+              <svg class="width-calc-svg" viewBox="0 0 200 200">
+                <!-- Background circle -->
+                <circle cx="100" cy="100" r="85" fill="none" stroke="rgba(255,255,255,0.06)" stroke-width="1" />
+                <circle cx="100" cy="100" r="60" fill="none" stroke="rgba(255,255,255,0.04)" stroke-width="1" />
+
+                <!-- Cardinal marks -->
+                <text x="100" y="22" fill="rgba(255,255,255,0.3)" font-size="8" text-anchor="middle">N</text>
+                <text x="185" y="104" fill="rgba(255,255,255,0.2)" font-size="8" text-anchor="middle">E</text>
+                <text x="100" y="192" fill="rgba(255,255,255,0.2)" font-size="8" text-anchor="middle">S</text>
+                <text x="15" y="104" fill="rgba(255,255,255,0.2)" font-size="8" text-anchor="middle">W</text>
+
+                <!-- Angle arc between left and right -->
+                <path
+                  v-if="widthCalcLeftHeading != null && widthCalcRightHeading != null"
+                  :d="(() => {
+                    const lr = (-widthCalcLeftHeading + 90) * Math.PI / 180
+                    const rr = (-widthCalcRightHeading + 90) * Math.PI / 180
+                    const r = 55
+                    const x1 = 100 + Math.cos(lr) * r
+                    const y1 = 100 - Math.sin(lr) * r
+                    const x2 = 100 + Math.cos(rr) * r
+                    const y2 = 100 - Math.sin(rr) * r
+                    const sweep = widthCalcAngleSpan > 180 ? 1 : 0
+                    return `M 100 100 L ${x1} ${y1} A ${r} ${r} 0 ${sweep} 1 ${x2} ${y2} Z`
+                  })()"
+                  fill="rgba(255, 156, 115, 0.12)"
+                  stroke="rgba(255, 156, 115, 0.35)"
+                  stroke-width="0.5"
+                />
+
+                <!-- Left marker -->
+                <line
+                  v-if="widthCalcLeftHeading != null"
+                  x1="100" y1="100"
+                  :x2="100 + Math.cos((-widthCalcLeftHeading + 90) * Math.PI / 180) * 70"
+                  :y2="100 - Math.sin((-widthCalcLeftHeading + 90) * Math.PI / 180) * 70"
+                  stroke="#7be6bf"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                />
+
+                <!-- Right marker -->
+                <line
+                  v-if="widthCalcRightHeading != null"
+                  x1="100" y1="100"
+                  :x2="100 + Math.cos((-widthCalcRightHeading + 90) * Math.PI / 180) * 70"
+                  :y2="100 - Math.sin((-widthCalcRightHeading + 90) * Math.PI / 180) * 70"
+                  stroke="#ff9c73"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                />
+
+                <!-- Live heading needle -->
+                <line
+                  v-if="widthCalcLiveHeading != null"
+                  x1="100" y1="100"
+                  :x2="100 + Math.cos((-widthCalcLiveHeading + 90) * Math.PI / 180) * 80"
+                  :y2="100 - Math.sin((-widthCalcLiveHeading + 90) * Math.PI / 180) * 80"
+                  stroke="rgba(255,255,255,0.5)"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                  stroke-dasharray="4 3"
+                />
+
+                <!-- Centre dot -->
+                <circle cx="100" cy="100" r="3" fill="rgba(255,255,255,0.8)" />
+              </svg>
+            </div>
+
+            <!-- Result panel -->
+            <div class="width-calc-result">
+              <p class="eyebrow">Estimated width</p>
+              <div class="clino__height">
+                <strong>
+                  {{ widthCalcResult == null ? '--' : widthCalcResult.toFixed(1) }}
+                </strong>
+                <span>{{ widthCalcUnit }}</span>
+              </div>
+              <div class="clino__formula" v-if="widthCalcAngleSpan != null">
+                <small>
+                  2 &times; {{ widthCalcDistance }}{{ widthCalcUnit }}
+                  &times; tan({{ widthCalcAngleSpan.toFixed(1) }}° / 2)
+                </small>
+              </div>
+              <div class="width-calc-angles">
+                <small>
+                  Left: {{ widthCalcLeftHeading != null ? `${widthCalcLeftHeading.toFixed(1)}°` : '--' }}
+                </small>
+                <small>
+                  Right: {{ widthCalcRightHeading != null ? `${widthCalcRightHeading.toFixed(1)}°` : '--' }}
+                </small>
+                <small v-if="widthCalcAngleSpan != null">
+                  Span: {{ widthCalcAngleSpan.toFixed(1) }}°
+                </small>
+              </div>
+            </div>
+          </div>
+
+          <!-- Lock buttons -->
+          <div class="button-row">
+            <button
+              class="button button--primary"
+              :disabled="widthCalcLiveHeading == null"
+              @click="lockWidthLeft"
             >
-              {{ selectedGuide.length ? step.stepText : step }}
-            </li>
-          </ol>
+              {{ widthCalcLeftHeading != null ? 'Re-lock Left' : 'Lock Left Edge' }}
+            </button>
+            <button
+              class="button button--secondary"
+              :disabled="widthCalcLiveHeading == null"
+              @click="lockWidthRight"
+            >
+              {{ widthCalcRightHeading != null ? 'Re-lock Right' : 'Lock Right Edge' }}
+            </button>
+            <button
+              class="button button--ghost"
+              :disabled="widthCalcLeftHeading == null && widthCalcRightHeading == null"
+              @click="resetWidthCalc"
+            >
+              Reset
+            </button>
+          </div>
+
+          <!-- Inputs -->
+          <div class="clino__inputs">
+            <label class="field">
+              <span>Distance to object</span>
+              <div class="clino__input-row">
+                <input
+                  v-model.number="widthCalcDistance"
+                  type="number"
+                  min="0.1"
+                  step="0.5"
+                  inputmode="decimal"
+                />
+                <select v-model="widthCalcUnit" class="clino__unit-select">
+                  <option value="m">m</option>
+                  <option value="ft">ft</option>
+                  <option value="yd">yd</option>
+                </select>
+              </div>
+            </label>
+          </div>
 
           <p class="comparison-copy">
-            Select this template, tap Start Copy Mode, perform the steps above, then tap Score Copy.
+            Stand at a known distance facing the object. Point the phone at the left edge and lock,
+            then point at the right edge and lock. Width = 2 &times; distance &times; tan(angle / 2).
           </p>
         </section>
 
-        <section class="panel stack" :data-tone="comparisonTone">
-          <div class="section-head">
-            <div>
-              <p class="eyebrow">Match result</p>
-              <h2>Copy analysis</h2>
-            </div>
-          </div>
-
-          <template v-if="latestComparison">
-            <div class="score-card">
-              <strong>{{ latestComparison.score }}</strong>
-              <span>/ 100</span>
-              <small>{{ latestComparison.verdict }}</small>
-            </div>
-            <p class="comparison-copy">
-              Template duration {{ (latestComparison.templateMetrics.durationMs / 1000).toFixed(1) }}s,
-              copy duration {{ (latestComparison.attemptMetrics.durationMs / 1000).toFixed(1) }}s.
-            </p>
-            <ul class="tips-list">
-              <li v-for="tip in latestComparison.tips" :key="tip">{{ tip }}</li>
-            </ul>
-          </template>
-          <p v-else class="comparison-copy">
-            Record a copy attempt after selecting a spell to see similarity scoring and
-            coaching tips.
-          </p>
-        </section>
       </div>
     </section>
 
