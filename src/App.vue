@@ -73,10 +73,14 @@ const heightCalcEyeHeight = ref(1.6)
 
 const SAFE_DIAL_GUIDE_DEGREES = 10
 const WATER_BUCKET_GOAL_MS = 15000
-const WATER_BUCKET_SAFE_TILT = 8
-const WATER_BUCKET_WARN_TILT = 14
-const WATER_BUCKET_SPILL_TILT = 22
-const WATER_BUCKET_SAFE_ROTATION = 22
+// ── Production-tuned thresholds ──────────────────────────────────────
+// Real phone IMUs report 2-5° of noise from hand tremor alone. Previous
+// SAFE_TILT of 8° triggered false spills constantly. These values are
+// calibrated for a person actually holding a phone in one hand:
+const WATER_BUCKET_SAFE_TILT = 12     // was 8 — accounts for natural hand tremor
+const WATER_BUCKET_WARN_TILT = 20     // was 14 — sloshing warning zone
+const WATER_BUCKET_SPILL_TILT = 32    // was 22 — real "bucket tipped" angle
+const WATER_BUCKET_SAFE_ROTATION = 35 // was 22 °/s — steady hand still reads ~15-25 °/s
 const WATER_BUCKET_DRIP_LIMIT = 6
 
 const accelTraceFields = [
@@ -292,14 +296,14 @@ const waterBucketRiskLabel = computed(() => {
 
   if (
     waterBucketTilt.value >= WATER_BUCKET_SPILL_TILT ||
-    (waterBucketRotationMagnitude.value ?? 0) >= 70
+    (waterBucketRotationMagnitude.value ?? 0) >= 100
   ) {
     return 'Major spill'
   }
 
   if (
     waterBucketTilt.value >= WATER_BUCKET_WARN_TILT ||
-    (waterBucketRotationMagnitude.value ?? 0) >= 40
+    (waterBucketRotationMagnitude.value ?? 0) >= 60
   ) {
     return 'Sloshing'
   }
@@ -797,15 +801,16 @@ function processWaterBucketSample(sample) {
   // Momentum represents the "sloshing energy" built up from sustained or sudden tilt.
   // It rises proportionally to tilt severity and decays exponentially when the phone
   // is held steady, modelling how real water keeps sloshing after you correct.
+  // Tuned for real-world hand tremor: gentle gains, longer decay half-life (~0.9s).
   const prevMomentum = waterBucketMomentum.value
   const tiltExcess = tilt != null ? Math.max(0, tilt - WATER_BUCKET_SAFE_TILT) : 0
   // Build momentum: tiltExcess drives it up; higher tilt = faster buildup
-  const momentumGain = tiltExcess * 0.8 * deltaSec
+  const momentumGain = tiltExcess * 0.5 * deltaSec
   // Rotation jerk adds momentum (sudden wrist flicks)
   const rotationExcess = Math.max(0, rotation - WATER_BUCKET_SAFE_ROTATION)
-  const rotMomentumGain = rotationExcess * 0.15 * deltaSec
-  // Exponential decay toward 0 (half-life ~0.6 s when steady)
-  const decay = Math.exp(-1.1 * deltaSec)
+  const rotMomentumGain = rotationExcess * 0.08 * deltaSec
+  // Exponential decay toward 0 (half-life ~0.9s — more forgiving than before)
+  const decay = Math.exp(-0.75 * deltaSec)
   const momentum = (prevMomentum + momentumGain + rotMomentumGain) * decay
   waterBucketMomentum.value = momentum
 
@@ -813,33 +818,33 @@ function processWaterBucketSample(sample) {
   // Combines three effects:
   //   1. Static tilt: gentle quadratic ramp once past the safe zone.
   //      Using (excess/range)² keeps low tilts very forgiving while steep tilts
-  //      drain fast. At SPILL_TILT the static component alone is ~12 %/s.
+  //      drain fast. At SPILL_TILT the static component alone is ~10 %/s.
   //   2. Momentum: linear contribution — sustained wobble or jerky corrections
   //      keep draining even after you straighten the phone, like real sloshing.
-  //   3. Extreme tilt penalty: a flat +18 %/s once past SPILL_TILT to make
+  //   3. Extreme tilt penalty: a flat +15 %/s once past SPILL_TILT to make
   //      obviously bad tilts punishing (the bucket can't hold water sideways).
   let spillRate = 0
 
   if (tilt != null && tilt > WATER_BUCKET_SAFE_TILT) {
-    const range = WATER_BUCKET_SPILL_TILT - WATER_BUCKET_SAFE_TILT // 14°
+    const range = WATER_BUCKET_SPILL_TILT - WATER_BUCKET_SAFE_TILT // 20°
     const normExcess = tiltExcess / range // 0..1 at spill threshold
     // Quadratic: gentle at low tilt, steep near spill threshold
-    spillRate += normExcess * normExcess * 12
+    spillRate += normExcess * normExcess * 10
   }
 
   if (tilt != null && tilt > WATER_BUCKET_SPILL_TILT) {
-    spillRate += 18
+    spillRate += 15
   }
 
   // Momentum contribution — keeps water sloshing out after corrections
-  spillRate += momentum * 3.5
+  spillRate += momentum * 2.5
 
   // Rotation adds a mild direct term on top of its momentum contribution
   if (rotation > WATER_BUCKET_SAFE_ROTATION) {
-    spillRate += rotationExcess * 0.15
+    spillRate += rotationExcess * 0.08
   }
 
-  const spillingNow = spillRate > 2
+  const spillingNow = spillRate > 1.5
 
   if (spillingNow && !waterBucketWasSpilling.value) {
     waterBucketSpillEvents.value += 1

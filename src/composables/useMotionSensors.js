@@ -2,6 +2,19 @@ import { computed, onBeforeUnmount, ref } from 'vue'
 
 const HISTORY_LIMIT = 180
 
+// ── Low-pass filter (exponential moving average) ──────────────────────
+// Smoothing factors: 0 = ignore new data, 1 = no smoothing (pass-through).
+// Typical phone IMUs report at 60-100 Hz; these alphas reject jitter while
+// preserving real gesture dynamics.
+const ACCEL_ALPHA = 0.35        // acceleration: moderate smoothing (noisy sensor)
+const GYRO_ALPHA = 0.45         // rotation rate: lighter smoothing (less noisy, fast signals)
+const ORIENTATION_ALPHA = 0.30  // orientation angles: heavier smoothing (derived/fused, can drift)
+
+// Noise gate thresholds — values below these are clamped to zero to prevent
+// drift and phantom motion when the device is stationary.
+const ACCEL_NOISE_FLOOR = 0.08  // m/s²  (typical phone noise ~0.05-0.12)
+const GYRO_NOISE_FLOOR = 0.6    // °/s   (typical phone noise ~0.3-1.0)
+
 function round(value, digits = 3) {
   if (value == null || Number.isNaN(value)) {
     return null
@@ -14,6 +27,17 @@ function numberOrNull(value) {
   return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
+function gateNoise(value, floor) {
+  if (value == null) return null
+  return Math.abs(value) < floor ? 0 : value
+}
+
+function emaScalar(previous, current, alpha) {
+  if (current == null) return previous
+  if (previous == null) return current
+  return previous + alpha * (current - previous)
+}
+
 function makeVector(source) {
   return {
     x: round(numberOrNull(source?.x)),
@@ -22,11 +46,29 @@ function makeVector(source) {
   }
 }
 
+function makeFilteredVector(source, previous, alpha, noiseFloor) {
+  const raw = makeVector(source)
+  return {
+    x: round(gateNoise(emaScalar(previous?.x ?? null, raw.x, alpha), noiseFloor)),
+    y: round(gateNoise(emaScalar(previous?.y ?? null, raw.y, alpha), noiseFloor)),
+    z: round(gateNoise(emaScalar(previous?.z ?? null, raw.z, alpha), noiseFloor))
+  }
+}
+
 function makeRotation(source) {
   return {
     alpha: round(numberOrNull(source?.alpha)),
     beta: round(numberOrNull(source?.beta)),
     gamma: round(numberOrNull(source?.gamma))
+  }
+}
+
+function makeFilteredRotation(source, previous, alpha, noiseFloor) {
+  const raw = makeRotation(source)
+  return {
+    alpha: round(gateNoise(emaScalar(previous?.alpha ?? null, raw.alpha, alpha), noiseFloor)),
+    beta: round(gateNoise(emaScalar(previous?.beta ?? null, raw.beta, alpha), noiseFloor)),
+    gamma: round(gateNoise(emaScalar(previous?.gamma ?? null, raw.gamma, alpha), noiseFloor))
   }
 }
 
@@ -78,6 +120,12 @@ export function useMotionSensors() {
   let lastOrientation = createEmptySample().orientation
   let removeListeners = () => {}
 
+  // Filter state — holds the previous filtered values for EMA continuity
+  let prevAccel = null
+  let prevAccelGravity = null
+  let prevRotation = null
+  let prevOrientationAngles = null
+
   function pushSample(sample) {
     const nextSample = {
       ...sample,
@@ -93,21 +141,49 @@ export function useMotionSensors() {
   function handleMotion(event) {
     const timestamp = Math.round(event.timeStamp || performance.now())
 
+    const filteredAccel = makeFilteredVector(event.acceleration, prevAccel, ACCEL_ALPHA, ACCEL_NOISE_FLOOR)
+    const filteredAccelGravity = makeFilteredVector(event.accelerationIncludingGravity, prevAccelGravity, ACCEL_ALPHA, 0)
+    const filteredRotation = makeFilteredRotation(event.rotationRate, prevRotation, GYRO_ALPHA, GYRO_NOISE_FLOOR)
+
+    prevAccel = filteredAccel
+    prevAccelGravity = filteredAccelGravity
+    prevRotation = filteredRotation
+
     pushSample({
       timestamp,
       interval: round(numberOrNull(event.interval)),
-      acceleration: makeVector(event.acceleration),
-      accelerationIncludingGravity: makeVector(event.accelerationIncludingGravity),
-      rotationRate: makeRotation(event.rotationRate),
+      acceleration: filteredAccel,
+      accelerationIncludingGravity: filteredAccelGravity,
+      rotationRate: filteredRotation,
       orientation: { ...lastOrientation }
     })
   }
 
   function handleOrientation(event) {
+    // Orientation angles use EMA but no noise gate (absolute angles, not deltas)
+    const rawAlpha = numberOrNull(event.alpha)
+    const rawBeta = numberOrNull(event.beta)
+    const rawGamma = numberOrNull(event.gamma)
+
+    const filteredBeta = round(emaScalar(prevOrientationAngles?.beta ?? null, rawBeta, ORIENTATION_ALPHA))
+    const filteredGamma = round(emaScalar(prevOrientationAngles?.gamma ?? null, rawGamma, ORIENTATION_ALPHA))
+    // Alpha wraps 0-360 so EMA is applied only if the jump is small (avoids 359→1 glitch)
+    const prevAlpha = prevOrientationAngles?.alpha
+    let filteredAlpha
+    if (prevAlpha != null && rawAlpha != null && Math.abs(((rawAlpha - prevAlpha + 540) % 360) - 180) < 30) {
+      filteredAlpha = round(prevAlpha + ORIENTATION_ALPHA * (((rawAlpha - prevAlpha + 540) % 360) - 180))
+      if (filteredAlpha < 0) filteredAlpha += 360
+      if (filteredAlpha >= 360) filteredAlpha -= 360
+    } else {
+      filteredAlpha = round(rawAlpha)
+    }
+
+    prevOrientationAngles = { alpha: filteredAlpha, beta: filteredBeta, gamma: filteredGamma }
+
     lastOrientation = {
-      alpha: round(numberOrNull(event.alpha)),
-      beta: round(numberOrNull(event.beta)),
-      gamma: round(numberOrNull(event.gamma)),
+      alpha: filteredAlpha,
+      beta: filteredBeta,
+      gamma: filteredGamma,
       absolute: Boolean(event.absolute),
       compassHeading: resolveCompassHeading(event)
     }

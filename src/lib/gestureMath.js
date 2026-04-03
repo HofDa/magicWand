@@ -39,21 +39,47 @@ function durationBetween(firstSample, lastSample) {
   return Math.max(0, numberOrZero(lastSample.timestamp) - numberOrZero(firstSample.timestamp))
 }
 
+// ── Normalization scales ──────────────────────────────────────────────
+// Chosen to map real-world gesture ranges into roughly [-1, 1].
+// Typical wand gesture: 2-15 m/s² accel peaks, 50-400 °/s rotation peaks.
+// Previous values (/8 accel, /200 gyro) were too aggressive — they clipped
+// moderate gestures and couldn't distinguish gentle from strong motions.
+const ACCEL_SCALE = 15    // m/s²  — covers the practical gesture range without clipping
+const GYRO_SCALE = 300    // °/s   — wrist flicks peak ~200-400 °/s on phones
+const PITCH_ROLL_SCALE = 120 // °  — wider range avoids saturation during full swings
+const HEADING_SCALE = 180 // °     — half-circle normalization
+
+// Dead zone: acceleration deltas below this are treated as zero to reject
+// sensor drift and small hand tremors from contaminating the feature vector.
+const ACCEL_DEAD_ZONE = 0.15 // m/s²
+const GYRO_DEAD_ZONE = 1.5   // °/s
+
+function applyDeadZone(value, threshold) {
+  return Math.abs(value) < threshold ? 0 : value
+}
+
 function featureVector(sample, baseline) {
+  const ax = applyDeadZone(numberOrZero(sample.acceleration?.x) - numberOrZero(baseline.acceleration?.x), ACCEL_DEAD_ZONE)
+  const ay = applyDeadZone(numberOrZero(sample.acceleration?.y) - numberOrZero(baseline.acceleration?.y), ACCEL_DEAD_ZONE)
+  const az = applyDeadZone(numberOrZero(sample.acceleration?.z) - numberOrZero(baseline.acceleration?.z), ACCEL_DEAD_ZONE)
+  const ra = applyDeadZone(numberOrZero(sample.rotationRate?.alpha), GYRO_DEAD_ZONE)
+  const rb = applyDeadZone(numberOrZero(sample.rotationRate?.beta), GYRO_DEAD_ZONE)
+  const rg = applyDeadZone(numberOrZero(sample.rotationRate?.gamma), GYRO_DEAD_ZONE)
+
   return [
-    clamp((numberOrZero(sample.acceleration?.x) - numberOrZero(baseline.acceleration?.x)) / 8, -1.6, 1.6),
-    clamp((numberOrZero(sample.acceleration?.y) - numberOrZero(baseline.acceleration?.y)) / 8, -1.6, 1.6),
-    clamp((numberOrZero(sample.acceleration?.z) - numberOrZero(baseline.acceleration?.z)) / 8, -1.6, 1.6),
-    clamp(numberOrZero(sample.rotationRate?.alpha) / 200, -1.8, 1.8),
-    clamp(numberOrZero(sample.rotationRate?.beta) / 200, -1.8, 1.8),
-    clamp(numberOrZero(sample.rotationRate?.gamma) / 200, -1.8, 1.8),
-    clamp(angleDelta(sample.orientation?.beta, baseline.orientation?.beta) / 90, -1.5, 1.5),
-    clamp(angleDelta(sample.orientation?.gamma, baseline.orientation?.gamma) / 90, -1.5, 1.5),
-    clamp(angleDelta(sample.orientation?.compassHeading, baseline.orientation?.compassHeading) / 180, -1.2, 1.2)
+    clamp(ax / ACCEL_SCALE, -1.5, 1.5),
+    clamp(ay / ACCEL_SCALE, -1.5, 1.5),
+    clamp(az / ACCEL_SCALE, -1.5, 1.5),
+    clamp(ra / GYRO_SCALE, -1.5, 1.5),
+    clamp(rb / GYRO_SCALE, -1.5, 1.5),
+    clamp(rg / GYRO_SCALE, -1.5, 1.5),
+    clamp(angleDelta(sample.orientation?.beta, baseline.orientation?.beta) / PITCH_ROLL_SCALE, -1.2, 1.2),
+    clamp(angleDelta(sample.orientation?.gamma, baseline.orientation?.gamma) / PITCH_ROLL_SCALE, -1.2, 1.2),
+    clamp(angleDelta(sample.orientation?.compassHeading, baseline.orientation?.compassHeading) / HEADING_SCALE, -1.2, 1.2)
   ]
 }
 
-function resampleVectors(vectors, size = 48) {
+function resampleVectors(vectors, size = 64) {
   if (!vectors.length) {
     return []
   }
@@ -115,7 +141,7 @@ function directionLabel(axis, value) {
 }
 
 function rotationLabel(axis, value) {
-  if (Math.abs(value) < 18) {
+  if (Math.abs(value) < 25) {
     return ''
   }
 
@@ -171,7 +197,7 @@ function movementSymbol(axis, value) {
 }
 
 function rotationCue(axis, value) {
-  if (Math.abs(value) < 18) {
+  if (Math.abs(value) < 25) {
     return 'Hold'
   }
 
@@ -187,7 +213,7 @@ function rotationCue(axis, value) {
 }
 
 function rotationSymbol(value) {
-  if (Math.abs(value) < 18) {
+  if (Math.abs(value) < 25) {
     return '•'
   }
 
@@ -319,6 +345,33 @@ export function createInstructionGuide(samples) {
   return buildInstructionSegments(samples)
 }
 
+// ── Warping-tolerant distance ─────────────────────────────────────────
+// Instead of strict point-to-point comparison, each template point is matched
+// against a local neighbourhood (±WARP_WINDOW) in the attempt. This gives
+// tolerance to small timing offsets — like a lightweight band-constrained DTW
+// but in O(n·w) instead of O(n²), which is fine for 64-point vectors.
+const WARP_WINDOW = 3
+
+function warpTolerantAverageDistance(templateVectors, attemptVectors) {
+  const n = templateVectors.length
+  let totalDistance = 0
+
+  for (let i = 0; i < n; i++) {
+    let bestDist = Infinity
+    const lo = Math.max(0, i - WARP_WINDOW)
+    const hi = Math.min(n - 1, i + WARP_WINDOW)
+
+    for (let j = lo; j <= hi; j++) {
+      const d = vectorDistance(templateVectors[i], attemptVectors[j])
+      if (d < bestDist) bestDist = d
+    }
+
+    totalDistance += bestDist
+  }
+
+  return totalDistance / n
+}
+
 export function compareRecordings(templateSamples, attemptSamples) {
   const templateMetrics = extractMetrics(templateSamples)
   const attemptMetrics = extractMetrics(attemptSamples)
@@ -341,11 +394,8 @@ export function compareRecordings(templateSamples, attemptSamples) {
     attemptSamples.map((sample) => featureVector(sample, attemptSamples[0]))
   )
 
-  const averageDistance =
-    templateVectors.reduce(
-      (total, vector, index) => total + vectorDistance(vector, attemptVectors[index]),
-      0
-    ) / templateVectors.length
+  // Use warping-tolerant distance for real-world timing tolerance
+  const averageDistance = warpTolerantAverageDistance(templateVectors, attemptVectors)
 
   const durationRatio =
     Math.max(templateMetrics.durationMs, attemptMetrics.durationMs) /
@@ -356,13 +406,18 @@ export function compareRecordings(templateSamples, attemptSamples) {
   const rotationRatio =
     attemptMetrics.peakRotation / Math.max(1, templateMetrics.peakRotation)
 
+  // ── Scoring weights ──────────────────────────────────────────────
+  // Shape distance is the primary signal (weight 38). Duration, energy, and
+  // rotation are secondary signals that penalise obviously wrong attempts
+  // without dominating the score for close-but-imperfect matches.
+  // The duration penalty is now symmetric — too fast is just as wrong as too slow.
   const score = Math.round(
     clamp(
       100 -
-        averageDistance * 32 -
-        Math.max(0, durationRatio - 1) * 22 -
-        Math.abs(1 - energyRatio) * 18 -
-        Math.abs(1 - rotationRatio) * 12,
+        averageDistance * 38 -
+        Math.max(0, durationRatio - 1) * 18 -
+        Math.abs(1 - clamp(energyRatio, 0.3, 3)) * 14 -
+        Math.abs(1 - clamp(rotationRatio, 0.3, 3)) * 10,
       0,
       100
     )
@@ -370,31 +425,43 @@ export function compareRecordings(templateSamples, attemptSamples) {
 
   const tips = []
 
-  if (attemptMetrics.durationMs < templateMetrics.durationMs * 0.8) {
-    tips.push('The copy is shorter than the original. Slow down and hold the ending pose longer.')
-  } else if (attemptMetrics.durationMs > templateMetrics.durationMs * 1.25) {
+  if (attemptMetrics.durationMs < templateMetrics.durationMs * 0.7) {
+    tips.push('The copy is much shorter than the original. Slow down and follow the full arc.')
+  } else if (attemptMetrics.durationMs < templateMetrics.durationMs * 0.85) {
+    tips.push('The copy is a bit fast. Try matching the original tempo more closely.')
+  } else if (attemptMetrics.durationMs > templateMetrics.durationMs * 1.4) {
     tips.push('The copy runs long. Tighten the path and avoid pausing between phases.')
+  } else if (attemptMetrics.durationMs > templateMetrics.durationMs * 1.2) {
+    tips.push('Slightly slow. Pick up the pace to match the original rhythm.')
   }
 
-  if (attemptMetrics.motionEnergy < templateMetrics.motionEnergy * 0.75) {
-    tips.push('Drive the stroke harder. The original spell carries more acceleration energy.')
+  if (attemptMetrics.motionEnergy < templateMetrics.motionEnergy * 0.6) {
+    tips.push('Much less energy than the original. Drive the motion with more conviction.')
+  } else if (attemptMetrics.motionEnergy < templateMetrics.motionEnergy * 0.8) {
+    tips.push('A little weak. Push the stroke with more acceleration.')
+  } else if (attemptMetrics.motionEnergy > templateMetrics.motionEnergy * 1.5) {
+    tips.push('Too forceful. The original spell is smoother — ease off the acceleration.')
   }
 
-  if (attemptMetrics.peakRotation < templateMetrics.peakRotation * 0.75) {
-    tips.push('Add more wrist rotation. The template spell twists more aggressively.')
+  if (attemptMetrics.peakRotation < templateMetrics.peakRotation * 0.6) {
+    tips.push('Not enough wrist rotation. The template spell twists more aggressively.')
+  } else if (attemptMetrics.peakRotation > templateMetrics.peakRotation * 1.6) {
+    tips.push('Too much wrist rotation. Dial back the twist to match the original.')
   }
 
   if (!tips.length) {
     tips.push('Your timing and motion envelope are close. Focus on keeping the same rhythm on every repetition.')
   }
 
+  // Verdict thresholds — slightly more forgiving for "close" to reward
+  // users who are genuinely replicating the gesture shape.
   let verdict = 'unstable'
 
-  if (score >= 86) {
+  if (score >= 82) {
     verdict = 'locked'
-  } else if (score >= 70) {
+  } else if (score >= 64) {
     verdict = 'close'
-  } else if (score >= 45) {
+  } else if (score >= 40) {
     verdict = 'forming'
   }
 
