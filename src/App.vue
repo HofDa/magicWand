@@ -3,6 +3,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import CompassRose from './components/CompassRose.vue'
 import TracePanel from './components/TracePanel.vue'
 import VectorBars from './components/VectorBars.vue'
+import WandPreview from './components/WandPreview.vue'
 import { useMotionSensors } from './composables/useMotionSensors'
 import {
   compareRecordings,
@@ -1582,6 +1583,8 @@ onBeforeUnmount(() => {
             <span>Peak rotation {{ selectedSpell.metrics.peakRotation }}</span>
             <span>Heading span {{ selectedSpell.metrics.headingSpan }}°</span>
           </div>
+
+          <WandPreview :samples="selectedSpell.samples" />
 
           <div v-if="selectedGuide.length" class="guide-progress">
             <div class="guide-progress__header">
